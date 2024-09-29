@@ -3,7 +3,7 @@ import pandas as pd
 from scipy.optimize import minimize
 from scipy.stats import chi2, multivariate_t
 from concurrent.futures import ProcessPoolExecutor
-from utilities.utility_DualProcess import generate_random_trial_sequence
+from DualProcess import generate_random_trial_sequence
 import time
 
 
@@ -58,9 +58,14 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
                              np.random.uniform(-1.9999, -0.0001)]
             bounds = ((0.0001, 0.9999), (0.0001, 0.9999), (-1.9999, -0.0001))
 
-        result = minimize(model.negative_log_likelihood, initial_guess,
-                          args=(pdata['reward'], pdata['choiceset'], pdata['choice']),
-                          bounds=bounds, method='L-BFGS-B', options={'maxiter': 10000})
+        if model.task == 'ABCD':
+            result = minimize(model.negative_log_likelihood, initial_guess,
+                              args=(pdata['reward'], pdata['choiceset'], pdata['choice']),
+                              bounds=bounds, method='L-BFGS-B', options={'maxiter': 10000})
+        elif model.task == 'IGT_SGT':
+            result = minimize(model.negative_log_likelihood, initial_guess,
+                              args=(pdata['reward'], pdata['choice']),
+                              bounds=bounds, method='L-BFGS-B', options={'maxiter': 10000})
 
         if result.fun < best_nll:
             best_nll = result.fun
@@ -85,7 +90,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
 
 
 class ComputationalModels:
-    def __init__(self, model_type, condition="Gains", num_trials=250, num_params=2):
+    def __init__(self, model_type, task='ABCD', condition="Gains", num_trials=250, num_params=2):
         """
         Initialize the Model.
 
@@ -130,6 +135,7 @@ class ComputationalModels:
 
         # Model type
         self.model_type = model_type
+        self.task = task
 
         # Mapping of updating functions to model types
         self.updating_mapping = {
@@ -149,7 +155,7 @@ class ComputationalModels:
         self.updating_function = self.updating_mapping[self.model_type]
 
         # Mapping of nll functions to model types
-        self.nll_mapping = {
+        self.nll_mapping_ABCD = {
             'delta': self.standard_nll,
             'decay': self.standard_nll,
             'decay_fre': self.standard_nll,
@@ -163,7 +169,22 @@ class ComputationalModels:
             'ACTR_Ori': self.ACTR_nll
         }
 
-        self.nll_function = self.nll_mapping[self.model_type]
+        self.nll_mapping_IGT_SGT = {
+            'delta': self.igt_nll,
+            'decay': self.igt_nll,
+            'decay_fre': self.igt_nll,
+            'decay_choice': self.igt_nll,
+            'decay_win': self.igt_nll,
+            'delta_decay': self.igt_nll,
+            'sampler_decay': self.igt_nll,
+            'sampler_decay_PE': self.igt_nll,
+            'sampler_decay_AV': self.igt_nll
+        }
+
+        if task == 'ABCD':
+            self.nll_function = self.nll_mapping_ABCD[self.model_type]
+        elif task == 'IGT_SGT':
+            self.nll_function = self.nll_mapping_IGT_SGT[self.model_type]
 
         # Mapping of choice sets to pairs of options
         self.choiceset_mapping = [
@@ -571,6 +592,17 @@ class ComputationalModels:
 
         return nll
 
+    def igt_nll(self, reward, choice, trial, epsilon):
+
+        nll = 0
+
+        for r, ch, t in zip(reward, choice, trial):
+            prob_choice = self.softmax_mapping[self.model_type](np.array(self.EVs))[ch]
+            nll += -np.log(max(epsilon, prob_choice))
+            self.update(ch, r, t)
+
+        return nll
+
     def negative_log_likelihood(self, params, reward, choiceset, choice):
         """
         Compute the negative log likelihood for the given parameters and data.
@@ -819,7 +851,7 @@ def bayes_factor(null_results, alternative_results):
     return BF
 
 
-def dict_generator(df):
+def dict_generator(df, task='ABCD'):
     """
     Convert a dataframe into a dictionary.
 
@@ -830,12 +862,20 @@ def dict_generator(df):
     - A dictionary of the dataframe.
     """
     d = {}
-    for name, group in df.groupby('Subnum'):
-        d[name] = {
-            'reward': group['Reward'].tolist(),
-            'choiceset': group['SetSeen.'].tolist(),
-            'choice': group['KeyResponse'].tolist(),
-        }
+    if task == 'ABCD':
+        for name, group in df.groupby('Subnum'):
+            d[name] = {
+                'reward': group['Reward'].tolist(),
+                'choiceset': group['SetSeen.'].tolist(),
+                'choice': group['KeyResponse'].tolist(),
+            }
+    elif task == 'IGT_SGT':
+        for name, group in df.groupby('Subnum'):
+            d[name] = {
+                'reward': group['outcome'].tolist(),
+                'choice': group['choice'].tolist(),
+            }
+
     return d
 
 
