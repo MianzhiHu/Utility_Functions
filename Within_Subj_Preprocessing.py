@@ -207,3 +207,25 @@ def preprocess_data(main_folder_directory, behavioral_list, other_data_list,
             lambda x: x.where((x >= 1) & (x <= 10)))
 
         return all_data_combined, knowledge_df
+
+
+# This function is used to extract numbers from mixed-type columns, such as age
+def extract_numbers(data_column):
+    result = []
+    for item in data_column:
+        # If it's a string, extract numeric part using regex
+        if isinstance(item, str):
+            match = re.search(r'\d+', item)  # Find one or more digits
+            if match:
+                result.append(float(match.group()))  # Convert to float
+            else:
+                result.append(np.nan)  # If no match, keep as NaN
+        # If it's a number (int or float), append directly
+        elif isinstance(item, (int, float)):
+            if not np.isnan(item):
+                result.append(float(item))  # Convert valid numbers to float
+            else:
+                result.append(np.nan)  # Preserve NaN
+        else:
+            result.append(np.nan)  # Handle any other cases as NaN
+    return result
