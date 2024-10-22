@@ -3,7 +3,7 @@ import pandas as pd
 from scipy.optimize import minimize
 from scipy.stats import chi2, multivariate_t
 from concurrent.futures import ProcessPoolExecutor
-from DualProcess import generate_random_trial_sequence
+from utils.DualProcess import generate_random_trial_sequence
 import time
 
 
@@ -467,7 +467,11 @@ class ComputationalModels:
         - reward: Reward received for the current trial.
         - trial: Current trial number.
         """
-        if trial > 150:
+
+        # if trial == 200:
+        #     self.reset()
+
+        if trial > 120:
             return self.EVs
 
         self.choices_count[chosen] += 1
@@ -588,6 +592,7 @@ class ComputationalModels:
             prob_choice_alt = self.softmax_mapping[self.model_type](np.array([self.EVs[cs_mapped[1]],
                                                                               self.EVs[cs_mapped[0]]]))[0]
             nll += -np.log(max(epsilon, prob_choice if ch == cs_mapped[0] else prob_choice_alt))
+
             self.update(ch, r, t)
 
         return nll
@@ -623,9 +628,12 @@ class ComputationalModels:
 
         epsilon = 1e-12
 
-        trial = np.arange(1, self.num_trials + 1)
+        trial_onetask = np.arange(1, self.num_trials + 1)
 
-        return self.nll_function(reward, choiceset, choice, trial, epsilon)
+        # # in this within-subject task, we need to combine two sets of trials
+        # trial = np.concatenate((trial_onetask, trial_onetask))
+
+        return self.nll_function(reward, choiceset, choice, trial_onetask, epsilon)
 
     def fit(self, data, num_iterations=1000, beta_lower=-1, beta_upper=1):
 

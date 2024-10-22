@@ -326,6 +326,18 @@ class DualProcessModel:
         self.weight_history = []
         self.obj_weight_history = []
 
+    def restart_exp(self):
+        self.EV_Dir = np.full(4, 0.5)
+        self.EV_Gau = np.full(4, 0.5)
+        self.AV = np.full(4, 0.5)
+        self.var = np.full(4, 1 / 12)
+        self.M2 = np.full(4, 0.0)
+        self.alpha = np.full(4, 1.0)
+        self.gamma_a = np.full(4, 0.5)
+        self.gamma_b = np.full(4, 0.0)
+        self.reward_history = [[] for _ in range(4)]
+        self.process_chosen = []
+
     def softmax(self, chosen_prob, alt1_prob, chosen, alt1, n1, n2):
         c = 3 ** self.t - 1
         num = np.exp(min(700, c * chosen_prob))
@@ -469,7 +481,10 @@ class DualProcessModel:
 
     def update(self, chosen, reward, trial):
 
-        if trial > 150:
+        # if trial == 200:
+        #     self.restart_exp()
+
+        if trial > 120:
             return self.EV_Dir, self.EV_Gau
 
         else:
@@ -1552,9 +1567,12 @@ class DualProcessModel:
 
         self.t = params[self.param_start]
 
-        trial = np.arange(1, self.num_trials + 1)
+        trial_onetask = np.arange(1, self.num_trials + 1)
 
-        return self.model_mapping[self.model](params, reward, choiceset, choice, trial)
+        # # in this within-subject task, we need to combine two sets of trials
+        # trial = np.concatenate((trial_onetask, trial_onetask))
+
+        return self.model_mapping[self.model](params, reward, choiceset, choice, trial_onetask)
 
     def negative_log_likelihood_weight(self, params, reward, choiceset, choice):
 
@@ -1567,7 +1585,7 @@ class DualProcessModel:
         return self.model_mapping[self.model](params, reward, choiceset, choice, trial)
 
     def fit(self, data, model, num_iterations=100, arbi_option='Max Prob', Gau_fun=None, Dir_fun=None,
-            weight_Gau='weight', weight_Dir='weight'):
+            weight_Gau='softmax', weight_Dir='softmax'):
 
         self.model = model
         self.arbitration_function = self.arbitration_mapping[arbi_option]
