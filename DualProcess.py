@@ -484,7 +484,7 @@ class DualProcessModel:
         # if trial == 200:
         #     self.restart_exp()
 
-        if trial > 120:
+        if trial > 150:
             return self.EV_Dir, self.EV_Gau
 
         else:

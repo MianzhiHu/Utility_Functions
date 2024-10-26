@@ -471,7 +471,7 @@ class ComputationalModels:
         # if trial == 200:
         #     self.reset()
 
-        if trial > 120:
+        if trial > 150:
             return self.EVs
 
         self.choices_count[chosen] += 1
