@@ -16,7 +16,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
 
     if model_type in ('decay', 'delta', 'decay_choice', 'decay_win'):
         k = 2  # Initialize the cumulative number of parameters
-    elif model_type in ('decay_fre', 'ACTR', 'ACTR_Ori'):
+    elif model_type in ('decay_fre', 'ACTR', 'ACTR_Ori', 'WSLS'):
         k = 3
     elif model_type in ('sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV', 'delta_decay'):
         k = model.num_params
@@ -57,6 +57,9 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             initial_guess = [np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(-1.9999, -0.0001)]
             bounds = ((0.0001, 0.9999), (0.0001, 0.9999), (-1.9999, -0.0001))
+        elif model_type == 'WSLS':
+            initial_guess = [np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
+                                np.random.uniform(0.0001, 0.9999)]
 
         if model.task == 'ABCD':
             result = minimize(model.negative_log_likelihood, initial_guess,
@@ -122,6 +125,8 @@ class ComputationalModels:
         self.s = None
         self.tau = None
         self.w = None  # This is for the addition of the IRL model which is not implemented yet
+        self.p_ws = None
+        self.p_ls = None
         self.iteration = 0
 
         self.condition_initialization = {
@@ -149,7 +154,8 @@ class ComputationalModels:
             'sampler_decay_PE': self.sampler_decay_PE_update,
             'sampler_decay_AV': self.sampler_decay_AV_update,
             'ACTR': self.ACTR_update,
-            'ACTR_Ori': self.ACTR_update
+            'ACTR_Ori': self.ACTR_update,
+            'WSLS': self.WSLS_update
         }
 
         self.updating_function = self.updating_mapping[self.model_type]
@@ -165,6 +171,7 @@ class ComputationalModels:
             'sampler_decay': self.standard_nll,
             'sampler_decay_PE': self.standard_nll,
             'sampler_decay_AV': self.standard_nll,
+            'WSLS': self.WSLS_nll,
             'ACTR': self.ACTR_nll,
             'ACTR_Ori': self.ACTR_nll
         }
@@ -178,7 +185,8 @@ class ComputationalModels:
             'delta_decay': self.igt_nll,
             'sampler_decay': self.igt_nll,
             'sampler_decay_PE': self.igt_nll,
-            'sampler_decay_AV': self.igt_nll
+            'sampler_decay_AV': self.igt_nll,
+            'WSLS': self.igt_nll,
         }
 
         if task == 'ABCD':
@@ -221,6 +229,7 @@ class ComputationalModels:
             'sampler_decay': self.softmax,
             'sampler_decay_PE': self.softmax,
             'sampler_decay_AV': self.softmax,
+            'WSLS': self.softmax,
             'ACTR': self.softmax,
             'ACTR_Ori': self.softmax_ACTR
         }
@@ -347,8 +356,7 @@ class ComputationalModels:
 
     def decay_win_update(self, chosen, reward, trial, choiceset=None):
         prediction_error = reward - self.AV
-        weighted_PE = prediction_error * self.a
-        self.AV += weighted_PE
+        self.AV += prediction_error * self.a
         if prediction_error > 0:
             self.EVs[chosen] += 1
         self.EVs = self.EVs * (1 - self.a)
@@ -432,6 +440,17 @@ class ComputationalModels:
         # Update EVs based on the samples from memory
         for j in range(len(self.reward_history)):
             self.EVs[self.choice_history[j]] += self.AllProbs[j] * self.PE[j]
+
+    def WSLS_update(self, chosen, reward, trial, choiceset=None):
+        alt_option = self.determine_alt_option(choiceset, chosen)
+        prediction_error = reward - self.AV
+        self.AV += prediction_error * self.a
+        if prediction_error > 0:
+            self.EVs[chosen] = self.p_ws
+            self.EVs[alt_option] = 1 - self.p_ws
+        else:
+            self.EVs[chosen] = 1 - self.p_ls
+            self.EVs[alt_option] = self.p_ls
 
     def ACTR_update(self, chosen, reward, trial, choiceset=None):
 
@@ -577,6 +596,20 @@ class ComputationalModels:
 
         return nll
 
+    def WSLS_nll(self, reward, choiceset, choice, trial, epsilon):
+
+        nll = 0
+
+        for r, cs, ch, t in zip(reward, choiceset, choice, trial):
+            cs_mapped = self.choiceset_mapping[0][cs]
+            prob_choice = self.EVs[cs_mapped[0]]
+            prob_choice_alt = self.EVs[cs_mapped[1]]
+
+            nll += -np.log(max(epsilon, prob_choice if ch == cs_mapped[0] else prob_choice_alt))
+            self.update(ch, r, t)
+
+        return nll
+
     def standard_nll(self, reward, choiceset, choice, trial, epsilon):
 
         nll = 0
@@ -618,6 +651,7 @@ class ComputationalModels:
         self.s = params[0] if self.model_type == 'ACTR_Ori' else None
         self.t = params[0]
         self.a = params[1]
+        self.p_ws, self.p_ls = params[0], params[2] if self.model_type == 'WSLS' else None
         self.b = params[2] if self.num_params == 3 else self.a
         self.tau = params[2] if self.model_type in ('ACTR', 'ACTR_Ori') else None
 
