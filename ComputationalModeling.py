@@ -3,7 +3,7 @@ import pandas as pd
 from scipy.optimize import minimize
 from scipy.stats import chi2, multivariate_t
 from concurrent.futures import ProcessPoolExecutor
-from DualProcess import generate_random_trial_sequence
+from utils.DualProcess import generate_random_trial_sequence
 import time
 
 
