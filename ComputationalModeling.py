@@ -5,6 +5,7 @@ from scipy.stats import chi2, multivariate_t
 from concurrent.futures import ProcessPoolExecutor
 from utils.DualProcess import generate_random_trial_sequence
 import time
+import ast
 
 
 def fit_participant(model, participant_id, pdata, model_type, num_iterations=1000,
@@ -921,27 +922,55 @@ def dict_generator(df, task='ABCD'):
     return d
 
 
-def best_param_generator(df, param):
+def extract_all_parameters(param_str):
     """
+    Extracts all numerical values from a parameter string and returns them as a list of floats.
 
-    :param df:
-    :param param:
-    :return:
+    Parameters:
+    param_str (str): A string containing numerical values.
+
+    Returns:
+    list: A list of floats extracted from the string.
     """
-    if param == 't':
-        t_best = df['best_parameters'].apply(
-            lambda x: float(x.strip('[]').split()[0]) if isinstance(x, str) else np.nan
-        )
-        return t_best
+    if isinstance(param_str, str):
+        return [float(x) for x in param_str.strip('[]').split()]
+    return []
 
-    elif param == 'a':
-        a_best = df['best_parameters'].apply(
-            lambda x: float(x.strip('[]').split()[1]) if isinstance(x, str) else np.nan
-        )
-        return a_best
 
-    elif param == 'b':
-        b_best = df['best_parameters'].apply(
-            lambda x: float(x.strip('[]').split()[2]) if isinstance(x, str) else np.nan
-        )
-        return b_best
+def parameter_extractor(df, param_name=['t', 'alpha', "subj_weight"]):
+    """
+    Extracts all parameter values from a dataframe and returns them as a list of lists.
+
+    Parameters:
+    df (pd.DataFrame): A dataframe containing parameter values.
+
+    Returns:
+    list: A list of lists containing parameter values.
+    """
+    all_params = df['best_parameters'].apply(extract_all_parameters).tolist()
+    all_params_transposed = list(map(list, zip(*all_params)))
+    params_dict = {param: all_params_transposed[i] for i, param in enumerate(param_name)}
+
+    # attach back to the dataframe
+    for i, param in enumerate(param_name):
+        df[param] = params_dict[param]
+
+    # remove the best_parameters column
+    df.drop(columns=['best_parameters'], inplace=True)
+
+    return df
+
+
+def safely_evaluate(x):
+    if isinstance(x, list):
+        return x
+    try:
+        # Try to safely evaluate the string to a list using ast.literal_eval
+        return ast.literal_eval(x)
+    except (ValueError, SyntaxError):
+        # If it's not evaluable (e.g., a number), just return as is
+        return [x]  # Wrap in a list for consistency
+
+
+def trial_exploder(data, col):
+    return data.apply(lambda x: safely_evaluate(x[col]), axis=1).explode().reset_index(drop=True)
