@@ -17,7 +17,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
 
     if model_type in ('decay', 'delta', 'decay_choice', 'decay_win'):
         k = 2  # Initialize the cumulative number of parameters
-    elif model_type in ('decay_fre', 'ACTR', 'ACTR_Ori', 'WSLS'):
+    elif model_type in ('delta_asymmetric', 'decay_fre', 'ACTR', 'ACTR_Ori', 'WSLS', 'mean_var_utility'):
         k = 3
     elif model_type in ('sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV', 'delta_decay'):
         k = model.num_params
@@ -42,6 +42,14 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(beta_lower, beta_upper)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (beta_lower, beta_upper))
+        elif model_type in ('delta_asymmetric'):
+            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
+                         np.random.uniform(0.0001, 0.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999))
+        elif model_type in ('mean_var_utility'):
+            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 123.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999))
         elif model_type in ('delta_decay', 'sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV'):
             if model.num_params == 2:
                 initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
@@ -125,6 +133,7 @@ class ComputationalModels:
         self.b = None
         self.s = None
         self.tau = None
+        self.lamda = None
         self.w = None  # This is for the addition of the IRL model which is not implemented yet
         self.p_ws = None
         self.p_ls = None
@@ -137,6 +146,8 @@ class ComputationalModels:
         }
 
         self.EVs = np.full(self.num_options, self.condition_initialization[self.condition])
+        self.mean = np.full(self.num_options, self.condition_initialization[self.condition])
+        self.var = np.full(self.num_options, 1 / 12)
         self.AV = self.condition_initialization[self.condition]
 
         # Model type
@@ -146,11 +157,13 @@ class ComputationalModels:
         # Mapping of updating functions to model types
         self.updating_mapping = {
             'delta': self.delta_update,
+            'delta_asymmetric': self.delta_asymmetric_update,
             'decay': self.decay_update,
             'decay_fre': self.decay_fre_update,
             'decay_choice': self.decay_choice_update,
             'decay_win': self.decay_win_update,
             'delta_decay': self.delta_update,
+            'mean_var_utility': self.mean_var_utility,
             'sampler_decay': self.sampler_decay_update,
             'sampler_decay_PE': self.sampler_decay_PE_update,
             'sampler_decay_AV': self.sampler_decay_AV_update,
@@ -164,11 +177,13 @@ class ComputationalModels:
         # Mapping of nll functions to model types
         self.nll_mapping_ABCD = {
             'delta': self.standard_nll,
+            'delta_asymmetric': self.standard_nll,
             'decay': self.standard_nll,
             'decay_fre': self.standard_nll,
             'decay_choice': self.standard_nll,
             'decay_win': self.standard_nll,
             'delta_decay': self.standard_nll,
+            'mean_var_utility': self.standard_nll,
             'sampler_decay': self.standard_nll,
             'sampler_decay_PE': self.standard_nll,
             'sampler_decay_AV': self.standard_nll,
@@ -179,11 +194,13 @@ class ComputationalModels:
 
         self.nll_mapping_IGT_SGT = {
             'delta': self.igt_nll,
+            'delta_asymmetric': self.igt_nll,
             'decay': self.igt_nll,
             'decay_fre': self.igt_nll,
             'decay_choice': self.igt_nll,
             'decay_win': self.igt_nll,
             'delta_decay': self.igt_nll,
+            'mean_var_utility': self.igt_nll,
             'sampler_decay': self.igt_nll,
             'sampler_decay_PE': self.igt_nll,
             'sampler_decay_AV': self.igt_nll,
@@ -222,11 +239,13 @@ class ComputationalModels:
 
         self.softmax_mapping = {
             'delta': self.softmax,
+            'delta_asymmetric': self.softmax,
             'decay': self.softmax,
             'decay_fre': self.softmax,
             'decay_choice': self.softmax,
             'decay_win': self.softmax,
             'delta_decay': self.softmax,
+            'mean_var_utility': self.softmax,
             'sampler_decay': self.softmax,
             'sampler_decay_PE': self.softmax,
             'sampler_decay_AV': self.softmax,
@@ -250,6 +269,8 @@ class ComputationalModels:
 
         self.EVs = np.full(self.num_options, self.condition_initialization[self.condition])
         self.AV = self.condition_initialization[self.condition]
+        self.mean = np.full(self.num_options, self.condition_initialization[self.condition])
+        self.var = np.full(self.num_options, 1 / 12)
 
     def softmax(self, x):
         c = 3 ** self.t - 1
@@ -342,6 +363,11 @@ class ComputationalModels:
         prediction_error = reward - self.EVs[chosen]
         self.EVs[chosen] += self.a * prediction_error
 
+    def delta_asymmetric_update(self, chosen, reward, trial, choiceset=None):
+        prediction_error = reward - self.EVs[chosen]
+        self.EVs[chosen] += (prediction_error > 0) * self.a * prediction_error + (prediction_error < 0) * self.b * \
+                            prediction_error
+
     def decay_update(self, chosen, reward, trial, choiceset=None):
         self.EVs[chosen] += reward
         self.EVs = self.EVs * (1 - self.a)
@@ -358,14 +384,19 @@ class ComputationalModels:
     def decay_win_update(self, chosen, reward, trial, choiceset=None):
         prediction_error = reward - self.AV
         self.AV += prediction_error * self.a
-        if prediction_error > 0:
-            self.EVs[chosen] += 1
+        self.EVs[chosen] += (prediction_error > 0)
         self.EVs = self.EVs * (1 - self.a)
 
     def delta_decay_update(self, chosen, reward, trial, choiceset=None):
         prediction_error = reward - self.EVs[chosen]
         self.EVs[chosen] += self.a * prediction_error
         self.EVs = self.EVs * (1 - self.b)
+
+    def mean_var_utility(self, chosen, reward, trial, choiceset=None):
+        prediction_error = reward - self.mean[chosen]
+        self.mean[chosen] += self.a * prediction_error
+        self.var[chosen] += self.a * (prediction_error ** 2 - self.var[chosen])
+        self.EVs[chosen] = self.mean[chosen] - (self.lamda * self.var[chosen]) / 2
 
     def sampler_decay_update(self, chosen, reward, trial, choiceset=None):
         """
@@ -574,6 +605,7 @@ class ComputationalModels:
                 "a": self.a,
                 "b": self.b,
                 "tau": self.tau,
+                "lamda": self.lamda,
                 "weight": self.w,
                 "trial_details": trial_details,
                 "EV_history": EV_history
@@ -658,8 +690,9 @@ class ComputationalModels:
         self.t = params[0]
         self.a = params[1]
         self.p_ws, self.p_ls = params[0], params[2] if self.model_type == 'WSLS' else None
-        self.b = params[2] if self.num_params == 3 else self.a
+        self.b = params[2] if self.num_params == 3 or self.model_type in ('delta_asymmetric') else self.a
         self.tau = params[2] if self.model_type in ('ACTR', 'ACTR_Ori') else None
+        self.lamda = params[2] if self.model_type == 'mean_var_utility' else None
 
         epsilon = 1e-12
 
@@ -974,3 +1007,38 @@ def safely_evaluate(x):
 
 def trial_exploder(data, col):
     return data.apply(lambda x: safely_evaluate(x[col]), axis=1).explode().reset_index(drop=True)
+
+
+# ======================================================================================================================
+# Testing Code
+# ======================================================================================================================
+# # testing
+# test_results = []
+# test_data = dict_generator(HV_df[:250])
+# for model_type in ['delta', 'decay', 'decay_fre', 'decay_choice', 'decay_win', 'delta_decay', 'sampler_decay',
+#               'sampler_decay_PE', 'sampler_decay_AV', 'ACTR', 'ACTR_Ori']:
+#     print(f'Fitting {model_type} model')
+#     model_spec = ComputationalModels(model_type)
+#     sim_results = model_spec.simulate([0.65, 0.35, 0.75, 0.25], [0.43, 0.43, 0.43, 0.43],
+#                                  AB_freq=100, CD_freq=50, num_iterations=10)
+#
+#     # Here you can save the simulation results
+#
+#     result = model_spec.fit(test_data, num_iterations=2)
+#
+#     # Here you can save the fitting results
+#
+#
+# for i, model_type in enumerate(['delta', 'decay', 'decay_fre', 'decay_choice', 'decay_win', 'delta_decay', 'sampler_decay',
+#               'sampler_decay_PE', 'sampler_decay_AV', 'ACTR', 'ACTR_Ori']):
+#
+#     print(f'Post-hoc simulation for {model_type}')
+#
+#     # You will need the best-fitting parameters from the fitting results, so you load the results from previous
+#     # steps and use them here
+#     post_hoc_results = pd.read_csv(f'./{model_type}_HV_results.csv')
+#     model_spec = ComputationalModels(model_type)
+#     result = model_spec.post_hoc_simulation(post_hoc_results, HV_df[:250], reward_means=[0.65, 0.35, 0.75, 0.25],
+#                                             reward_sd=[0.43, 0.43, 0.43, 0.43], num_iterations=10, summary=True)
+#
+#     # Here you can save the post-hoc results
