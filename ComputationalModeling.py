@@ -49,7 +49,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
         elif model_type in ('mean_var_utility'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 123.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999))
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 123.9999))
         elif model_type in ('delta_decay', 'sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV'):
             if model.num_params == 2:
                 initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
@@ -558,6 +558,7 @@ class ComputationalModels:
             self.a = np.random.uniform()  # Randomly set decay parameter between 0 and 1
             self.b = np.random.uniform(beta_lower, beta_upper) if self.num_params == 3 else self.a
             self.tau = np.random.uniform(-1.9999, -0.0001) if self.model_type in ('ACTR', 'ACTR_Ori') else None
+            self.lamda = np.random.uniform(0.0001, 0.9999) if self.model_type == 'mean_var_utility' else None
             self.choices_count = np.zeros(self.num_options)
 
             EV_history = np.zeros((num_trials, self.num_options))
@@ -920,9 +921,9 @@ def bayes_factor(null_results, alternative_results):
     alternative_BIC = alternative_results['BIC']
 
     # Compute the Bayes factor
-    log_BF_array = -0.5 * (alternative_BIC - null_BIC)
-    mean_log_BF = np.mean(log_BF_array)
-    BF = np.exp(mean_log_BF)
+    BIC_diff_array = 0.5 * (null_BIC - alternative_BIC)
+    log_BIC_array = np.exp(BIC_diff_array)
+    BF = np.prod(log_BIC_array)
 
     return BF
 

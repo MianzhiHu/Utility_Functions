@@ -463,7 +463,7 @@ class DualProcessModel:
         else:
             pass
 
-        self.alpha = [np.clip(i * (1 - self.a), 1, 9999) for i in self.alpha]
+        self.alpha = [np.clip(i * (1 - self.a), 1e-50, 9999) for i in self.alpha]
 
     def Dir_update_with_exp_recency(self, chosen, reward, AV_total, trial):
         if (reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1):
@@ -980,7 +980,7 @@ class DualProcessModel:
 
             if self.Dir_update_fun in (self.Dir_update_with_linear_recency, self.Dir_update_with_exp_recency) or \
                     self.Gau_update_fun in (self.Gau_bayesian_update_with_recency, self.Gau_naive_update_with_recency):
-                self.a = np.random.uniform(0.0001, .9999)
+                self.a = np.random.uniform(0.0001, 0.9999)
 
             self.weight = np.random.uniform(0.0001, 0.9999) if self.model in ('Param',
                                                                               'Entropy_Dis_ID') else None
