@@ -6,6 +6,27 @@ from concurrent.futures import ProcessPoolExecutor
 from utils.DualProcess import generate_random_trial_sequence
 import time
 import ast
+from scipy.special import psi
+from scipy.stats import dirichlet
+
+
+# Mapping of choices to pairs of options for model recovery
+mapping = {
+    'SetSeen': {
+        ('A', 'B'): 0,
+        ('C', 'D'): 1,
+        ('C', 'A'): 2,
+        ('C', 'B'): 3,
+        ('A', 'D'): 4,
+        ('B', 'D'): 5,
+    },
+    'KeyResponse': {
+        'A': 0,
+        'B': 1,
+        'C': 2,
+        'D': 3
+    }
+}
 
 
 def fit_participant(model, participant_id, pdata, model_type, num_iterations=1000,
@@ -356,6 +377,33 @@ class ComputationalModels:
 
         return alt_option
 
+    def simulation_unpacker(self, dict):
+        all_sims = []
+
+        for res in dict:
+            sim_num = res['simulation_num']
+            a_val = res['a']
+            b_val = res['b']
+            t_val = res['t']
+            lambda_val = res['lamda']
+            tau_val = res['tau']
+            for trial_idx, trial_detail in zip(res['trial_indices'], res['trial_details']):
+                data_row = {
+                    'simulation_num': sim_num,
+                    'trial_index': trial_idx,
+                    'a': a_val,
+                    'b': b_val,
+                    't': t_val,
+                    'tau': tau_val,
+                    'lambda': lambda_val,
+                    'pair': trial_detail['pair'],
+                    'choice': trial_detail['choice'],
+                    'reward': trial_detail['reward'],
+                }
+                all_sims.append(data_row)
+
+        return pd.DataFrame(all_sims)
+
     # ==================================================================================================================
     # Now we define the updating function for each model
     # ==================================================================================================================
@@ -612,7 +660,7 @@ class ComputationalModels:
                 "EV_history": EV_history
             })
 
-        return all_results
+        return self.simulation_unpacker(all_results)
 
     # ==================================================================================================================
     # Now we define the negative log likelihood function for the ACT-R model because it requires updating EVs before
@@ -691,7 +739,7 @@ class ComputationalModels:
         self.t = params[0]
         self.a = params[1]
         self.p_ws, self.p_ls = params[0], params[2] if self.model_type == 'WSLS' else None
-        self.b = params[2] if self.num_params == 3 or self.model_type in ('delta_asymmetric') else self.a
+        self.b = params[2] if (self.num_params == 3 or self.model_type == 'delta_asymmetric') else self.a
         self.tau = params[2] if self.model_type in ('ACTR', 'ACTR_Ori') else None
         self.lamda = params[2] if self.model_type == 'mean_var_utility' else None
 
@@ -927,7 +975,97 @@ def bayes_factor(null_results, alternative_results):
 
     return BF
 
+# ----------------------------------------------------------------------------------------------------------------------
+# Implement Bayesian Model Selection (BMS)
+# ----------------------------------------------------------------------------------------------------------------------
+def vb_model_selection(log_evidences, alpha0=None, tol=1e-6, max_iter=1000):
+    """
+    Variational Bayesian Model Selection for multiple models and multiple subjects.
 
+    Implements the iterative VB algorithm described by:
+    - Equations 3, 7, 9, 11, 12, 13, and the final pseudo-code in Equation 14.
+
+    Parameters
+    ----------
+    log_evidences : np.ndarray, shape (N, K)
+        Matrix of log model evidences for N subjects and K models.
+        log_evidences[n, k] = ln p(y_n | m_{nk})
+    alpha0 : np.ndarray, shape (K,)
+        Initial Dirichlet prior parameters. If None, set to 1 for all models.
+    tol : float
+        Tolerance for convergence based on changes in alpha.
+    max_iter : int
+        Maximum number of VB iterations.
+
+    Returns
+    -------
+    alpha : np.ndarray, shape (K,)
+        Final Dirichlet parameters of the approximate posterior q(r).
+    g : np.ndarray, shape (N, K)
+        Posterior model assignment probabilities per subject.
+    """
+
+    N, K = log_evidences.shape
+    if alpha0 is None:
+        alpha0 = np.ones(K)
+
+    # Initialize alpha
+    alpha = alpha0.copy()
+
+    for iteration in range(max_iter):
+        alpha_sum = np.sum(alpha)
+
+        # Compute unnormalized posterior assignments u_nk
+        # u_nk = exp(ln p(y_n | m_nk) + Psi(alpha_k) - Psi(alpha_sum))
+        u = np.exp(log_evidences + psi(alpha) - psi(alpha_sum))  # shape (N,K)
+
+        # Normalize to get g_nk
+        u_sum = np.sum(u, axis=1, keepdims=True)
+        g = u / u_sum  # shape (N,K)
+
+        # Update beta_k = sum_n g_nk
+        beta = np.sum(g, axis=0)  # shape (K,)
+
+        # Update alpha
+        alpha_new = alpha0 + beta
+
+        # Check convergence
+        diff = np.linalg.norm(alpha_new - alpha)
+        alpha = alpha_new
+        if diff < tol:
+            break
+
+    return alpha, g
+
+
+def compute_exceedance_prob(alpha, n_samples=100000):
+    """
+    Compute exceedance probabilities for each model by Monte Carlo approximation.
+
+    Parameters
+    ----------
+    alpha : array-like of shape (K,)
+        The Dirichlet parameters for the posterior q(r).
+    n_samples : int
+        Number of samples to draw from Dirichlet.
+    random_state : int or None
+        Random seed for reproducibility.
+
+    Returns
+    -------
+    exceedance_probs : np.ndarray of shape (K,)
+        The exceedance probability for each model.
+    """
+    samples = dirichlet.rvs(alpha, size=n_samples)
+    winners = np.argmax(samples, axis=1)  # indices of best model per draw
+
+    K = len(alpha)
+    exceedance_probs = np.bincount(winners, minlength=K) / n_samples
+    return exceedance_probs
+
+# ======================================================================================================================
+# End of the Model Comparison Functions; now we define the prepatory functions
+# ======================================================================================================================
 def dict_generator(df, task='ABCD'):
     """
     Convert a dataframe into a dictionary.
@@ -1008,6 +1146,64 @@ def safely_evaluate(x):
 
 def trial_exploder(data, col):
     return data.apply(lambda x: safely_evaluate(x[col]), axis=1).explode().reset_index(drop=True)
+
+# ======================================================================================================================
+# Model Recovery & Parameter Recovery Functions
+# ======================================================================================================================
+def model_recovery(model_names, models, reward_means, reward_var, AB_freq=100, CD_freq=50, n_iterations=100,
+                   n_fitting_iterations=100):
+
+    n_models = len(models)
+    all_best_fitting_model = pd.DataFrame()
+    all_sim = pd.DataFrame()
+    all_fit = pd.DataFrame()
+
+    for i in range(n_iterations):
+
+        print(f"Running the {i + 1}th iteration")
+        print("=============================================")
+
+        start_time = time.time()
+
+        i_sim = pd.DataFrame()
+        i_fit = pd.DataFrame()
+
+        # simulate the data
+        for j in range(n_models):
+            sim = models[j].simulate(reward_means, reward_var, AB_freq=AB_freq, CD_freq=CD_freq, num_iterations=1)
+            sim['simulated_model'] = model_names[j]
+
+            i_sim = pd.concat([i_sim, sim]).reset_index(drop=True)
+
+        i_sim.iloc[:, 0] = (i_sim.index // 250) + 1
+        i_sim['pair'] = i_sim['pair'].map(mapping['SetSeen'])
+        i_sim['choice'] = i_sim['choice'].map(mapping['KeyResponse'])
+        i_sim.rename(columns={'simulation_num': 'Subnum', 'pair': 'SetSeen.',
+                                'choice': 'KeyResponse', 'reward': 'Reward'}, inplace=True)
+        sim_dict = dict_generator(i_sim)
+        all_sim = pd.concat([all_sim, i_sim]).reset_index(drop=True)
+
+        # fit the data
+        for k in range(n_models):
+            fit = models[k].fit(sim_dict, num_iterations=n_fitting_iterations)
+            fit['fit_model'] = model_names[k]
+            fit['simulated_model'] = model_names
+            i_fit = pd.concat([i_fit, fit]).reset_index(drop=True)
+
+        all_fit = pd.concat([all_fit, i_fit]).reset_index(drop=True)
+
+        # find the best fitting model
+        best_fitting_model = (i_fit.loc[i_fit.groupby('participant_id')['BIC'].idxmin()].reset_index(drop=True))
+
+        # append the best fitting model to the all_best_fitting_model
+        all_best_fitting_model = pd.concat([all_best_fitting_model, best_fitting_model]).reset_index(drop=True)
+
+        print(f"Time taken for iteration {i + 1}: {(time.time() - start_time) / 60} minutes")
+
+    # reset the participant id
+    all_best_fitting_model['participant_id'] = all_best_fitting_model.index + 1
+
+    return all_sim, all_fit, all_best_fitting_model
 
 
 # ======================================================================================================================

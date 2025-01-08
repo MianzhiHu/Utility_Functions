@@ -127,7 +127,7 @@ def fit_participant(model, participant_id, pdata, model_type, weight_fun, num_it
                                                      'Threshold', 'Threshold_Recency', 'Entropy_Dis', 'Entropy_Dis_ID'
                                                      ) else None,
         'best_obj_weight': best_obj_weight if model_type in ('Entropy_Dis', 'Entropy_Dis_ID') else None,
-        'total_nll': best_nll,
+        'best_nll': best_nll,
         'AIC': aic,
         'BIC': bic
     }
@@ -463,7 +463,7 @@ class DualProcessModel:
         else:
             pass
 
-        self.alpha = [np.clip(i * (1 - self.a), 1e-50, 9999) for i in self.alpha]
+        self.alpha = [np.clip(i * (1 - self.a), 1e-32, 9999) for i in self.alpha]
 
     def Dir_update_with_exp_recency(self, chosen, reward, AV_total, trial):
         if (reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1):
@@ -937,9 +937,9 @@ class DualProcessModel:
             summary = summary.dropna(axis=1, how='all')
             return summary
 
-    def simulate(self, reward_means, reward_sd, model, AB_freq=None, CD_freq=None,
-                 sim_trials=250, num_iterations=1000, arbi_option='Entropy', weight_Dir='weight',
-                 weight_Gau='softmax', Gau_fun=None, Dir_fun=None):
+    def simulate(self, reward_means, reward_sd, model='Entropy_Dis_ID', AB_freq=100, CD_freq=50,
+                 sim_trials=250, num_iterations=1000, arbi_option='Entropy', weight_Dir='softmax',
+                 weight_Gau='softmax', Gau_fun='Naive_Recency', Dir_fun='Linear_Recency'):
 
         self.model = model
 
@@ -1584,8 +1584,8 @@ class DualProcessModel:
 
         return self.model_mapping[self.model](params, reward, choiceset, choice, trial)
 
-    def fit(self, data, model, num_iterations=100, arbi_option='Max Prob', Gau_fun=None, Dir_fun=None,
-            weight_Gau='softmax', weight_Dir='softmax'):
+    def fit(self, data, model='Entropy_Dis_ID', num_iterations=100, arbi_option='Max Prob', Gau_fun='Naive_Recency',
+            Dir_fun='Linear+Recency', weight_Gau='softmax', weight_Dir='softmax'):
 
         self.model = model
         self.arbitration_function = self.arbitration_mapping[arbi_option]
