@@ -970,8 +970,10 @@ def bayes_factor(null_results, alternative_results):
 
     # Compute the Bayes factor
     BIC_diff_array = 0.5 * (null_BIC - alternative_BIC)
-    log_BIC_array = np.exp(BIC_diff_array)
-    BF = np.prod(log_BIC_array)
+    # log_BIC_array = np.exp(BIC_diff_array)
+    # BF = np.prod(log_BIC_array)
+    mean_bic_diff = np.mean(BIC_diff_array)
+    BF = np.exp(mean_bic_diff)
 
     return BF
 
