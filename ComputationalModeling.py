@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import random
 from scipy.optimize import minimize
 from scipy.stats import chi2, multivariate_t
 from concurrent.futures import ProcessPoolExecutor
@@ -803,6 +804,7 @@ class ComputationalModels:
             self.a = parameter_sequences[1][participant - 1]
             self.b = parameter_sequences[2][participant - 1] if num_parameters == 3 else self.a
             self.tau = parameter_sequences[2][participant - 1] if self.model_type in ('ACTR', 'ACTR_Ori') else None
+            self.lamda = parameter_sequences[2][participant - 1] if self.model_type == 'mean_var_utility' else None
 
             for _ in range(num_iterations):
 
@@ -870,6 +872,7 @@ class ComputationalModels:
                     "t": self.t,
                     "a": self.a,
                     "b": self.b,
+                    "lamda": self.lamda if self.model_type == 'mean_var_utility' else None,
                     "tau": self.tau if self.model_type in ('ACTR', 'ACTR_Ori') else None,
                     "trial_indices": trial_indices,
                     "trial_details": trial_details
@@ -884,6 +887,7 @@ class ComputationalModels:
             t = result["t"]
             a = result["a"]
             b = result["b"]
+            lamda = result["lamda"] if self.model_type == 'mean_var_utility' else None
             tau = result["tau"] if self.model_type == 'ACTR' else None
 
             for trial_idx, trial_detail in zip(result['trial_indices'], result['trial_details']):
@@ -894,6 +898,7 @@ class ComputationalModels:
                     "t": t,
                     "a": a,
                     "b": b,
+                    "lamda": lamda,
                     "tau": tau,
                     "pair": trial_detail['pair'],
                     "choice": trial_detail['choice'],
@@ -917,6 +922,119 @@ class ComputationalModels:
 
             return summary_df
 
+        else:
+            return df
+
+    def bootstrapping_post_hoc_simulation(self, fitting_result, reward_means, reward_sd, num_iterations=1000,
+                                          AB_freq=100, CD_freq=50, sim_trials=250, summary=False):
+
+        num_parameters = len(fitting_result['best_parameters'][0].strip('[]').split())
+
+        parameter_sequences = []
+        for i in range(num_parameters):
+            sequence = fitting_result['best_parameters'].apply(
+                lambda x: float(x.strip('[]').split()[i]) if isinstance(x, str) else np.nan
+            )
+            parameter_sequences.append(sequence)
+
+        # start the simulation
+        all_results = []
+
+        for n in range(num_iterations):
+            print(f"Iteration {n + 1} of {num_iterations}")
+
+            # randomly sample with replacement from the original data
+            random_idx = random.randint(0, len(fitting_result) - 1)
+            self.t = parameter_sequences[0][random_idx]
+
+            self.s = parameter_sequences[0][random_idx] if self.model_type == 'ACTR_Ori' else None
+            self.t = parameter_sequences[0][random_idx]
+            self.a = parameter_sequences[1][random_idx]
+            self.b = parameter_sequences[2][random_idx] if num_parameters == 3 else self.a
+            self.tau = parameter_sequences[2][random_idx] if self.model_type in ('ACTR', 'ACTR_Ori') else None
+            self.lamda = parameter_sequences[2][random_idx] if self.model_type == 'mean_var_utility' else None
+
+            self.reset()
+
+            trial_details = []
+            trial_indices = []
+
+            training_trial_sequence, transfer_trial_sequence = generate_random_trial_sequence(AB_freq, CD_freq)
+
+            for trial in range(sim_trials):
+                trial_indice = trial + 1
+                trial_indices.append(trial_indice)
+
+                if trial_indice < 151:
+                    pair = training_trial_sequence[trial_indice - 1]
+                else:
+                    pair = transfer_trial_sequence[trial_indice - 151]
+
+                optimal, suboptimal = pair[0], pair[1]
+
+                prob_optimal = self.softmax_mapping[self.model_type](np.array([self.EVs[optimal],
+                                                                               self.EVs[suboptimal]]))[0]
+                chosen = 1 if np.random.rand() < prob_optimal else 0
+
+                reward = np.random.normal(reward_means[optimal if chosen == 1 else suboptimal],
+                                          reward_sd[optimal if chosen == 1 else suboptimal])
+
+                trial_details.append(
+                    {"pair": pair, "choice": chosen, "reward": reward}
+                )
+
+                self.updating_function(optimal if chosen == 1 else suboptimal, reward, trial,
+                                       pair)
+
+            all_results.append({
+                "Subnum": n + 1,
+                "s": self.s,
+                "t": self.t,
+                "a": self.a,
+                "b": self.b,
+                "lamda": self.lamda if self.model_type == 'mean_var_utility' else None,
+                "tau": self.tau if self.model_type in ('ACTR', 'ACTR_Ori') else None,
+                "trial_indices": trial_indices,
+                "trial_details": trial_details
+            })
+
+        unpacked_results = []
+
+        for result in all_results:
+            subnum = result['Subnum']
+            s = result["s"]
+            t = result["t"]
+            a = result["a"]
+            b = result["b"]
+            lamda = result["lamda"] if self.model_type == 'mean_var_utility' else None
+            tau = result["tau"] if self.model_type == 'ACTR' else None
+
+            for trial_idx, trial_detail in zip(result['trial_indices'], result['trial_details']):
+                var = {
+                    "Subnum": subnum,
+                    "trial_index": trial_idx,
+                    "s": s,
+                    "t": t,
+                    "a": a,
+                    "b": b,
+                    "lamda": lamda,
+                    "tau": tau,
+                    "pair": trial_detail['pair'],
+                    "choice": trial_detail['choice'],
+                    "reward": trial_detail['reward'],
+                }
+
+                unpacked_results.append(var)
+
+        df = pd.DataFrame(unpacked_results)
+        df.dropna(how='all', inplace=True, axis=1)
+        if all(df['a'] == df['b']):
+            df.drop('b', axis=1, inplace=True)
+
+        if summary:
+            df.drop('trial_index', axis=1, inplace=True)
+            summary_df = df.groupby(['Subnum', 'pair']).mean().reset_index()
+            return summary_df
         else:
             return df
 
@@ -1144,6 +1262,18 @@ def safely_evaluate(x):
     except (ValueError, SyntaxError):
         # If it's not evaluable (e.g., a number), just return as is
         return [x]  # Wrap in a list for consistency
+
+
+def clean_list_string(s):
+    if isinstance(s, str):
+        # Remove unwanted characters and ensure proper formatting
+        s = s.strip("[],")  # Remove leading/trailing brackets and commas
+        s = s.replace(" ", ",")  # Replace spaces with commas
+        s = s.replace(",,", ",")  # Replace consecutive commas with a single comma
+        s = s.strip(",")  # Remove leading/trailing commas again after cleanup
+        # Ensure the string is wrapped in brackets
+        s = f"[{s}]"
+    return s
 
 
 def trial_exploder(data, col):

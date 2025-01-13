@@ -1,6 +1,7 @@
 import numpy as np
 import pandas as pd
 import time
+import random
 import ast
 from scipy.optimize import minimize, OptimizeResult
 from scipy.stats import dirichlet, multivariate_normal, entropy, norm
@@ -463,7 +464,7 @@ class DualProcessModel:
         else:
             pass
 
-        self.alpha = [np.clip(i * (1 - self.a), 1e-32, 9999) for i in self.alpha]
+        self.alpha = [np.clip(i * (1 - self.a), 1, 9999) for i in self.alpha]
 
     def Dir_update_with_exp_recency(self, chosen, reward, AV_total, trial):
         if (reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1):
@@ -1753,3 +1754,98 @@ class DualProcessModel:
                   f"minutes")
 
         return self.unpack_simulation_results(all_results, use_random_sequence)
+
+    def bootstrapping_post_hoc_simulation(self, fitting_result, model, reward_means, reward_sd, AB_freq=100,
+                                         CD_freq=50, sim_trials=250, num_iterations=5000, arbi_option='Entropy',
+                                         Gau_fun=None, Dir_fun=None, weight_Gau='softmax', weight_Dir='softmax',
+                                         recency=True):
+
+        self.model = model
+        self.arbitration_function = self.arbitration_mapping[arbi_option]
+
+        # Assign the methods based on the provided strings
+        self.action_selection_Dir = self.selection_mapping_Dir.get(weight_Dir)
+        self.action_selection_Gau = self.selection_mapping_Gau.get(weight_Gau)
+
+        self.Gau_update_fun = self.Gau_fun_customized.get(Gau_fun, self.Gau_fun_mapping[self.model])
+        self.Dir_update_fun = self.Dir_fun_customized.get(Dir_fun, self.Dir_fun_mapping[self.model])
+
+        post_hoc_func = self.sim_function_mapping[self.model]
+
+        if self.model in ('Dir', 'Gau'):
+            process = f'EV_{self.model}'
+        else:
+            process = None
+
+        print(f'============================================================')
+        print(f'In the current model, the Dirichlet process is updated using {self.Dir_update_fun.__name__} '
+              f'and the Gaussian process is updated using {self.Gau_update_fun.__name__}')
+        print(f'Dirichlet process is selected using {self.action_selection_Dir.__name__} and '
+              f'Gaussian process is selected using {self.action_selection_Gau.__name__}')
+        print(f'============================================================')
+
+        # extract the trial sequence for each participant
+        num_parameters = len(fitting_result['best_parameters'][0].strip('[]').split())
+
+        parameter_sequences = []
+        for i in range(num_parameters):
+            sequence = fitting_result['best_parameters'].apply(
+                lambda x: float(x.strip('[]').split()[i]) if isinstance(x, str) else np.nan
+            )
+            parameter_sequences.append(sequence)
+
+        # start the simulation
+        all_results = []
+
+        for n in range(num_iterations):
+            print(f"Iteration {n + 1} of {num_iterations}")
+
+            # randomly sample with replacement from the original data
+            random_idx = random.randint(0, len(fitting_result) - 1)
+            self.t = parameter_sequences[0][random_idx]
+
+            if recency:
+                self.a = parameter_sequences[1][random_idx]
+                self.weight = parameter_sequences[2][random_idx] if self.model in ('Param', 'Threshold',
+                                                                                    'Threshold_Recency',
+                                                                                    'Entropy_Dis_ID') else None
+                self.tau = parameter_sequences[2][random_idx] if self.model in ('Threshold',
+                                                                                 'Threshold_Recency') else None
+            else:
+                self.weight = parameter_sequences[1][random_idx] if self.model in ('Param', 'Threshold',
+                                                                                    'Threshold_Recency',
+                                                                                    'Entropy_Dis_ID') else None
+                self.tau = parameter_sequences[1][random_idx] if self.model in ('Threshold',
+                                                                                 'Threshold_Recency') else None
+
+            self.reset()
+
+            trial_details = []
+            trial_indices = []
+
+            training_trial_sequence, transfer_trial_sequence = generate_random_trial_sequence(AB_freq, CD_freq)
+
+            for trial in range(sim_trials):
+                trial_indice = trial + 1
+                trial_indices.append(trial_indice)
+
+                if trial_indice < 151:
+                    pair = training_trial_sequence[trial_indice - 1]
+                else:
+                    pair = transfer_trial_sequence[trial_indice - 151]
+
+                optimal, suboptimal = pair[0], pair[1]
+                post_hoc_func(optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial_indice, process)
+
+            all_results.append({
+                "Subnum": n + 1,
+                "t": self.t,
+                "a": self.a if recency else None,
+                "weight": self.weight if self.model in ('Param', 'Threshold', 'Threshold_Recency',
+                                                        'Entropy_Dis_ID') else None,
+                "tau": self.tau if self.model in ('Threshold', 'Threshold_Recency') else None,
+                "trial_indices": trial_indices,
+                "trial_details": trial_details
+            })
+
+        return self.unpack_simulation_results(all_results, True)
