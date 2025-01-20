@@ -156,7 +156,8 @@ def generate_random_trial_sequence(AB_freq, CD_freq):
 
 
 class DualProcessModel:
-    def __init__(self, n_samples=1000, num_trials=250):
+    def __init__(self, n_samples=1000, num_trials=250, task="ABCD"):
+        self.task = task
         self.iteration = None
         self.num_trials = num_trials
         self.EVs = np.full(4, 0.5)
@@ -209,6 +210,10 @@ class DualProcessModel:
              'AD': (0, 3)
              }
         ]
+
+        self.task_simulation_function_mapping = {
+            'ABCD': self.simulate_ABCD
+        }
 
         self.model_mapping = {
             'Dir': self.dir_nll,
@@ -339,17 +344,18 @@ class DualProcessModel:
         self.reward_history = [[] for _ in range(4)]
         self.process_chosen = []
 
-    def softmax(self, chosen_prob, alt1_prob, chosen, alt1, n1, n2):
+    def softmax(self, chosen_ev, alt1_ev, chosen, alt1, n1, n2):
         c = 3 ** self.t - 1
-        num = np.exp(min(700, c * chosen_prob))
-        denom = np.clip(num + np.exp(min(700, c * alt1_prob)), 0.0001, 9999)
+        num = np.exp(min(700, c * chosen_ev))
+        # denom = num + np.exp(min(700, c * alt1_prob))
+        denom = np.clip(num + np.exp(min(700, c * alt1_ev)), 0.0001, 9999)
         return np.clip(num / denom, 0.0001, 0.9999)
 
-    def weight_prop(self, chosen_prob, alt1_prob, chosen, alt1, n1, n2):
-        weight = chosen_prob / (chosen_prob + alt1_prob)
+    def weight_prop(self, chosen_ev, alt1_ev, chosen, alt1, n1, n2):
+        weight = chosen_ev / (chosen_ev + alt1_ev)
         return np.clip(weight, 0.0001, 0.9999)
 
-    def weight_Gau(self, chosen_prob, alt1_prob, chosen, alt1, n1, n2):
+    def weight_Gau(self, chosen_ev, alt1_ev, chosen, alt1, n1, n2):
         n1 = np.clip(n1, 1, 9999)
         n2 = np.clip(n2, 1, 9999)
         mu_D = self.AV[chosen] - self.AV[alt1]
@@ -357,9 +363,9 @@ class DualProcessModel:
         weight = norm.cdf(mu_D / var_D)
         return np.clip(weight, 0.0001, 0.9999)
 
-    def weight_softmax(self, chosen_prob, alt1_prob, chosen, alt1, n1, n2):
-        num = np.exp(chosen_prob)
-        denom = num + np.exp(alt1_prob)
+    def weight_softmax(self, chosen_ev, alt1_ev, chosen, alt1, n1, n2):
+        num = np.exp(chosen_ev)
+        denom = num + np.exp(alt1_ev)
         return np.clip(num / denom, 0.0001, 0.9999)
 
     def original_arbitration_mechanism(self, max_prob, dir_prob, dir_prob_alt, gau_prob, gau_prob_alt, trial_type=None,
@@ -718,6 +724,34 @@ class DualProcessModel:
              "reward": reward, "weight": weight_dir, 'obj_weight': obj_weight})
         self.update(chosen, reward, trial)
 
+    def distribution_entropy_id_sim_igtsgt(self, optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial,
+                                    process=None):
+
+        gau_entropy = 2 ** (multivariate_normal.entropy(self.AV, np.diag(self.var)))
+
+        dir_entropy = 2 ** (dirichlet.entropy(self.alpha))
+
+        obj_weight = gau_entropy / (dir_entropy + gau_entropy)
+        weight_dir = (self.weight * obj_weight) / (self.weight * obj_weight + (1 - self.weight) * (1 - obj_weight))
+
+        prob_optimal_dir = self.action_selection_Dir(self.EV_Dir[optimal], self.EV_Dir[suboptimal],
+                                                     optimal, suboptimal, len(self.reward_history[optimal]),
+                                                     len(self.reward_history[suboptimal]))
+        prob_optimal_gau = self.action_selection_Gau(self.EV_Gau[optimal], self.EV_Gau[suboptimal],
+                                                     optimal, suboptimal, len(self.reward_history[optimal]),
+                                                     len(self.reward_history[suboptimal]))
+
+        prob_optimal = EV_calculation(prob_optimal_dir, prob_optimal_gau, weight_dir)
+
+        chosen = optimal if np.random.rand() < prob_optimal else suboptimal
+
+        reward = np.random.normal(reward_means[chosen], reward_sd[chosen])
+
+        trial_details.append(
+            {"pair": (chr(65 + pair[0]), chr(65 + pair[1])), "choice": chr(65 + chosen),
+             "reward": reward, "weight": weight_dir, 'obj_weight': obj_weight})
+        self.update(chosen, reward, trial)
+
     def threshold_sim(self, optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial, process=None):
         prob_optimal_dir = self.action_selection_Dir(self.EV_Dir[optimal], self.EV_Dir[suboptimal],
                                                      optimal, suboptimal, len(self.reward_history[optimal]),
@@ -806,6 +840,56 @@ class DualProcessModel:
              "reward": reward, "process": chosen_process, 'weight': weight_dir})
 
         self.update(chosen, reward, trial)
+
+    # -----------------------------------------------------------------------------
+    # Define simulation functions for different tasks
+    # -----------------------------------------------------------------------------
+    def simulate_ABCD(self, sim_func, sim_trials, AB_freq, CD_freq, reward_means, reward_sd, process):
+        # Initialize the EVs for the Dirichlet and Gaussian processes
+        EV_history_Dir = np.zeros((sim_trials, 4))
+        EV_history_Gau = np.zeros((sim_trials, 4))
+        trial_details = []
+        trial_indices = []
+
+        training_trial_sequence, transfer_trial_sequence = generate_random_trial_sequence(AB_freq, CD_freq)
+
+        for trial in range(sim_trials):
+            trial_indice = trial + 1
+            trial_indices.append(trial_indice)
+
+            if trial_indice < 151:
+                pair = training_trial_sequence[trial_indice - 1]
+            else:
+                pair = transfer_trial_sequence[trial_indice - 151]
+
+            optimal, suboptimal = (pair[0], pair[1])
+
+            sim_func(optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial_indice, process)
+
+            EV_history_Dir[trial] = self.EV_Dir
+            EV_history_Gau[trial] = self.EV_Gau
+
+        return EV_history_Dir, EV_history_Gau, trial_details, trial_indices
+
+    # def simulate_IGTSGT(self, sim_func, sim_trials, AB_freq, CD_freq, reward_means, reward_sd, process):
+    #     # Initialize the EVs for the Dirichlet and Gaussian processes
+    #     EV_history_Dir = np.zeros((sim_trials, 4))
+    #     EV_history_Gau = np.zeros((sim_trials, 4))
+    #     trial_details = []
+    #     trial_indices = []
+    #
+    #     for trial in range(sim_trials):
+    #         trial_indice = trial + 1
+    #         trial_indices.append(trial_indice)
+    #
+    #         optimal, suboptimal = (pair[0], pair[1])
+    #
+    #         sim_func(optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial_indice, process)
+    #
+    #         EV_history_Dir[trial] = self.EV_Dir
+    #         EV_history_Gau[trial] = self.EV_Gau
+    #
+    #     return EV_history_Dir, EV_history_Gau, trial_details, trial_indices
 
     def unpack_simulation_results(self, results, use_random_sequences=None):
         unpacked_results = []
@@ -991,42 +1075,22 @@ class DualProcessModel:
             elif self.model in ('Threshold_Dis'):
                 self.tau = np.random.uniform(0.0001, 2.9999)
 
-            # Initialize the EVs for the Dirichlet and Gaussian processes
-            EV_history_Dir = np.zeros((sim_trials, 4))
-            EV_history_Gau = np.zeros((sim_trials, 4))
-            trial_details = []
-            trial_indices = []
+        EV_history_Dir, EV_history_Gau, trial_details, trial_indices = (
+            self.task_simulation_function_mapping[self.task](sim_func, sim_trials, AB_freq, CD_freq, reward_means,
+                                                                reward_sd, process))
 
-            training_trial_sequence, transfer_trial_sequence = generate_random_trial_sequence(AB_freq, CD_freq)
-
-            for trial in range(sim_trials):
-                trial_indice = trial + 1
-                trial_indices.append(trial_indice)
-
-                if trial_indice < 151:
-                    pair = training_trial_sequence[trial_indice - 1]
-                else:
-                    pair = transfer_trial_sequence[trial_indice - 151]
-
-                optimal, suboptimal = (pair[0], pair[1])
-
-                sim_func(optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial_indice, process)
-
-                EV_history_Dir[trial] = self.EV_Dir
-                EV_history_Gau[trial] = self.EV_Gau
-
-            all_results.append({
-                "simulation_num": iteration + 1,
-                "trial_indices": trial_indices,
-                "t": self.t,
-                "a": self.a if self.model in ('Recency', 'Threshold_Recency', 'Entropy_Dis', 'Threshold_Dis',
-                                              'Dual_Dis', 'Entropy_Dis_ID') else None,
-                "param_weight": self.weight if self.model in ('Param', 'Entropy_Dis_ID') else None,
-                "tau": self.tau if self.model in ('Threshold', 'Threshold_Recency') else None,
-                "trial_details": trial_details,
-                "EV_history_Dir": EV_history_Dir,
-                "EV_history_Gau": EV_history_Gau
-            })
+        all_results.append({
+            "simulation_num": iteration + 1,
+            "trial_indices": trial_indices,
+            "t": self.t,
+            "a": self.a if self.model in ('Recency', 'Threshold_Recency', 'Entropy_Dis', 'Threshold_Dis',
+                                          'Dual_Dis', 'Entropy_Dis_ID') else None,
+            "param_weight": self.weight if self.model in ('Param', 'Entropy_Dis_ID') else None,
+            "tau": self.tau if self.model in ('Threshold', 'Threshold_Recency') else None,
+            "trial_details": trial_details,
+            "EV_history_Dir": EV_history_Dir,
+            "EV_history_Gau": EV_history_Gau
+        })
 
         return self.unpack_simulation_results(all_results)
 

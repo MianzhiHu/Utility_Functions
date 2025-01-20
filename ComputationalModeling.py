@@ -1283,7 +1283,7 @@ def trial_exploder(data, col):
 # Model Recovery & Parameter Recovery Functions
 # ======================================================================================================================
 def model_recovery(model_names, models, reward_means, reward_var, AB_freq=100, CD_freq=50, n_iterations=100,
-                   n_fitting_iterations=100):
+                   n_fitting_iterations=100, metric='BIC'):
 
     n_models = len(models)
     all_best_fitting_model = pd.DataFrame()
@@ -1325,7 +1325,7 @@ def model_recovery(model_names, models, reward_means, reward_var, AB_freq=100, C
         all_fit = pd.concat([all_fit, i_fit]).reset_index(drop=True)
 
         # find the best fitting model
-        best_fitting_model = (i_fit.loc[i_fit.groupby('participant_id')['BIC'].idxmin()].reset_index(drop=True))
+        best_fitting_model = (i_fit.loc[i_fit.groupby('participant_id')[metric].idxmin()].reset_index(drop=True))
 
         # append the best fitting model to the all_best_fitting_model
         all_best_fitting_model = pd.concat([all_best_fitting_model, best_fitting_model]).reset_index(drop=True)
