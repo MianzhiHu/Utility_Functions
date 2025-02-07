@@ -158,6 +158,7 @@ def generate_random_trial_sequence(AB_freq, CD_freq):
 class DualProcessModel:
     def __init__(self, n_samples=1000, num_trials=250, task="ABCD"):
         self.task = task
+        self.a_min = None
         self.iteration = None
         self.num_trials = num_trials
         self.EVs = np.full(4, 0.5)
@@ -167,7 +168,7 @@ class DualProcessModel:
         self.AV = np.full(4, 0.5)
         self.var = np.full(4, 1 / 12)
         self.M2 = np.full(4, 0.0)
-        self.alpha = np.full(4, 1.0)
+        self.alpha = np.full(4, 1e-32)
         self.gamma_a = np.full(4, 0.5)
         self.gamma_b = np.full(4, 0.0)
         self.n_samples = n_samples
@@ -347,9 +348,8 @@ class DualProcessModel:
     def softmax(self, chosen_ev, alt1_ev, chosen, alt1, n1, n2):
         c = 3 ** self.t - 1
         num = np.exp(min(700, c * chosen_ev))
-        # denom = num + np.exp(min(700, c * alt1_prob))
-        denom = np.clip(num + np.exp(min(700, c * alt1_ev)), 0.0001, 9999)
-        return np.clip(num / denom, 0.0001, 0.9999)
+        denom = num + np.exp(min(700, c * alt1_ev))
+        return np.clip(num / denom, 1e-32, 1 - 1e-32)
 
     def weight_prop(self, chosen_ev, alt1_ev, chosen, alt1, n1, n2):
         weight = chosen_ev / (chosen_ev + alt1_ev)
@@ -451,7 +451,6 @@ class DualProcessModel:
         self.AV[chosen] = np.mean(self.reward_history[chosen])
         self.var[chosen] = np.var(self.reward_history[chosen], ddof=1) if len(self.reward_history[chosen]) > 1 else (
                                                                                                                             reward - self.prior_mean) ** 2
-
     def Gau_naive_update_with_recency(self, prior_mean, prior_var, reward, chosen, n=1):
         delta = self.a * (reward - prior_mean)
         self.AV[chosen] += delta
@@ -470,7 +469,7 @@ class DualProcessModel:
         else:
             pass
 
-        self.alpha = [np.clip(i * (1 - self.a), 1, 9999) for i in self.alpha]
+        self.alpha = [np.clip(i * (1 - self.a), self.a_min, 9999) for i in self.alpha]
 
     def Dir_update_with_exp_recency(self, chosen, reward, AV_total, trial):
         if (reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1):
@@ -478,7 +477,7 @@ class DualProcessModel:
         else:
             pass
 
-        self.alpha = [np.clip(i ** (1 - self.a), 1, 9999) for i in self.alpha]
+        self.alpha = [np.clip(i ** (1 - self.a), self.a_min, 9999) for i in self.alpha]
 
     def Dir_update_learning(self, chosen, reward, AV_total, trial):
         if (reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1):
@@ -1024,9 +1023,10 @@ class DualProcessModel:
 
     def simulate(self, reward_means, reward_sd, model='Entropy_Dis_ID', AB_freq=100, CD_freq=50,
                  sim_trials=250, num_iterations=1000, arbi_option='Entropy', weight_Dir='softmax',
-                 weight_Gau='softmax', Gau_fun='Naive_Recency', Dir_fun='Linear_Recency'):
+                 weight_Gau='softmax', Gau_fun='Naive_Recency', Dir_fun='Linear_Recency', a_min=1):    
 
         self.model = model
+        self.a_min = a_min
 
         sim_func = self.sim_function_mapping[self.model]
 
@@ -1075,22 +1075,22 @@ class DualProcessModel:
             elif self.model in ('Threshold_Dis'):
                 self.tau = np.random.uniform(0.0001, 2.9999)
 
-        EV_history_Dir, EV_history_Gau, trial_details, trial_indices = (
-            self.task_simulation_function_mapping[self.task](sim_func, sim_trials, AB_freq, CD_freq, reward_means,
-                                                                reward_sd, process))
+            EV_history_Dir, EV_history_Gau, trial_details, trial_indices = (
+                self.task_simulation_function_mapping[self.task](sim_func, sim_trials, AB_freq, CD_freq, reward_means,
+                                                                    reward_sd, process))
 
-        all_results.append({
-            "simulation_num": iteration + 1,
-            "trial_indices": trial_indices,
-            "t": self.t,
-            "a": self.a if self.model in ('Recency', 'Threshold_Recency', 'Entropy_Dis', 'Threshold_Dis',
-                                          'Dual_Dis', 'Entropy_Dis_ID') else None,
-            "param_weight": self.weight if self.model in ('Param', 'Entropy_Dis_ID') else None,
-            "tau": self.tau if self.model in ('Threshold', 'Threshold_Recency') else None,
-            "trial_details": trial_details,
-            "EV_history_Dir": EV_history_Dir,
-            "EV_history_Gau": EV_history_Gau
-        })
+            all_results.append({
+                "simulation_num": iteration + 1,
+                "trial_indices": trial_indices,
+                "t": self.t,
+                "a": self.a if self.model in ('Recency', 'Threshold_Recency', 'Entropy_Dis', 'Threshold_Dis',
+                                              'Dual_Dis', 'Entropy_Dis_ID') else None,
+                "param_weight": self.weight if self.model in ('Param', 'Entropy_Dis_ID') else None,
+                "tau": self.tau if self.model in ('Threshold', 'Threshold_Recency') else None,
+                "trial_details": trial_details,
+                "EV_history_Dir": EV_history_Dir,
+                "EV_history_Gau": EV_history_Gau
+            })
 
         return self.unpack_simulation_results(all_results)
 
@@ -1701,9 +1701,10 @@ class DualProcessModel:
     def post_hoc_simulation(self, fitting_result, original_data, model, reward_means, reward_sd, AB_freq=100,
                             CD_freq=50, sim_trials=250, num_iterations=1000, arbi_option='Entropy',
                             Gau_fun=None, Dir_fun=None, weight_Gau='softmax', weight_Dir='softmax',
-                            use_random_sequence=True, recency=True):
+                            use_random_sequence=True, recency=True, a_min=1):
 
         self.model = model
+        self.a_min = a_min
         self.arbitration_function = self.arbitration_mapping[arbi_option]
 
         # Assign the methods based on the provided strings
@@ -1822,9 +1823,10 @@ class DualProcessModel:
     def bootstrapping_post_hoc_simulation(self, fitting_result, model, reward_means, reward_sd, AB_freq=100,
                                          CD_freq=50, sim_trials=250, num_iterations=5000, arbi_option='Entropy',
                                          Gau_fun=None, Dir_fun=None, weight_Gau='softmax', weight_Dir='softmax',
-                                         recency=True):
+                                         recency=True, a_min=1):
 
         self.model = model
+        self.a_min = a_min
         self.arbitration_function = self.arbitration_mapping[arbi_option]
 
         # Assign the methods based on the provided strings
