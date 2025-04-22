@@ -1,3 +1,5 @@
+from email.policy import default
+
 import numpy as np
 import pandas as pd
 import time
@@ -15,7 +17,7 @@ from concurrent.futures import ProcessPoolExecutor
 # decision-making process, whereas when the variance is large, the Dirichlet process (frequency) dominates.
 
 
-def fit_participant(model, participant_id, pdata, model_type, weight_fun, num_iterations=1000):
+def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_iterations=1000):
     print(f"Fitting participant {participant_id}...")
     start_time = time.time()
 
@@ -31,8 +33,8 @@ def fit_participant(model, participant_id, pdata, model_type, weight_fun, num_it
     else:
         k = 1
 
-    if weight_fun == 'pure_weight':
-        k = k - 1
+    if model.num_t == 2:
+        k = k + 1
 
     model.iteration = 0
 
@@ -58,8 +60,8 @@ def fit_participant(model, participant_id, pdata, model_type, weight_fun, num_it
             bounds = [(0.0001, 4.9999), (0.0001, 0.9999)]
         elif model_type in ('Entropy_Dis_ID', 'Param'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999)]
-            bounds = [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999)]
+                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
+            bounds = [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999)]
         elif model_type == 'Threshold':
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.6931)]
             bounds = [(0.0001, 4.9999), (0.0001, 0.6931)]
@@ -78,20 +80,13 @@ def fit_participant(model, participant_id, pdata, model_type, weight_fun, num_it
             initial_guess = [np.random.uniform(0.0001, 4.9999)]
             bounds = [(0.0001, 4.9999)]
 
-        if weight_fun == 'pure_weight':
-            # remove the first parameter from the initial guess and bounds
-            initial_guess = initial_guess[1:]
-            bounds = bounds[1:]
-            if len(initial_guess) == 0:
-                result = model.negative_log_likelihood_weight(initial_guess, pdata['reward'], pdata['choiceset'],
-                                                              pdata['choice'])
-            else:
-                result = minimize(model.negative_log_likelihood_weight, initial_guess,
-                                  args=(pdata['reward'], pdata['choiceset'], pdata['choice']),
-                                  bounds=bounds, method='L-BFGS-B', options={'maxiter': 10000})
-        else:
+        if task == 'ABCD':
             result = minimize(model.negative_log_likelihood, initial_guess,
                               args=(pdata['reward'], pdata['choiceset'], pdata['choice']),
+                              bounds=bounds, method='L-BFGS-B', options={'maxiter': 10000})
+        elif task == 'IGT_SGT':
+            result = minimize(model.negative_log_likelihood, initial_guess,
+                              args=(pdata['reward'], pdata['choice']),
                               bounds=bounds, method='L-BFGS-B', options={'maxiter': 10000})
 
         if isinstance(result, OptimizeResult):
@@ -156,19 +151,21 @@ def generate_random_trial_sequence(AB_freq, CD_freq):
 
 
 class DualProcessModel:
-    def __init__(self, n_samples=1000, num_trials=250, task="ABCD"):
+    def __init__(self, n_samples=1000, num_trials=250, task="ABCD", default_EV=0.5):
         self.task = task
+        self.default_EV = float(default_EV)
+        self.num_t = None
         self.a_min = None
         self.iteration = None
         self.num_trials = num_trials
-        self.EVs = np.full(4, 0.5)
-        self.default_EVs = np.full(4, 0.5)
-        self.EV_Dir = np.full(4, 0.5)
-        self.EV_Gau = np.full(4, 0.5)
-        self.AV = np.full(4, 0.5)
+        self.EVs = np.full(4, self.default_EV)
+        self.default_EVs = np.full(4, self.default_EV)
+        self.EV_Dir = np.full(4, self.default_EV)
+        self.EV_Gau = np.full(4, self.default_EV)
+        self.AV = np.full(4, self.default_EV)
         self.var = np.full(4, 1 / 12)
         self.M2 = np.full(4, 0.0)
-        self.alpha = np.full(4, 1e-32)
+        self.alpha = np.full(4, 1)
         self.gamma_a = np.full(4, 0.5)
         self.gamma_b = np.full(4, 0.0)
         self.n_samples = n_samples
@@ -178,6 +175,7 @@ class DualProcessModel:
         self.obj_weight_history = []
 
         self.t = None
+        self.t2 = None
         self.a = None
         self.tau = None
         self.weight = None
@@ -188,10 +186,9 @@ class DualProcessModel:
         self.Dir_update_fun = None
         self.action_selection_Gau = None
         self.action_selection_Dir = None
-        self.weight_fun = None
         self.param_start = 0
 
-        self.prior_mean = 0.5
+        self.prior_mean = self.default_EV
         self.prior_var = 1 / 12
 
         # Define the mapping between model parameters and input features
@@ -216,7 +213,7 @@ class DualProcessModel:
             'ABCD': self.simulate_ABCD
         }
 
-        self.model_mapping = {
+        self.ABCD_model_mapping = {
             'Dir': self.dir_nll,
             'Gau': self.gau_nll,
             'Dual': self.dual_nll,
@@ -233,6 +230,15 @@ class DualProcessModel:
             'Param': self.param_nll,
             'Multi_Param': self.multi_param_nll
         }
+
+        self.IGT_SGT_model_mapping = {
+            'Entropy_Dis_ID': self.distribution_entropy_id_igt_sgt_nll
+        }
+
+        if self.task == 'ABCD':
+            self.model_mapping = self.ABCD_model_mapping
+        elif self.task == 'IGT_SGT':
+            self.model_mapping = self.IGT_SGT_model_mapping
 
         self.sim_function_mapping = {
             'Dir': self.single_process_sim,
@@ -294,16 +300,11 @@ class DualProcessModel:
         }
 
         self.selection_mapping_Dir = {
-            'softmax': self.softmax,
-            'weight': self.weight_prop,
-            'weight_softmax': self.weight_softmax
+            'softmax': self.softmax
         }
 
         self.selection_mapping_Gau = {
             'softmax': self.softmax,
-            'weight': self.weight_prop,
-            'weight_Gau': self.weight_Gau,
-            'weight_softmax': self.weight_softmax
         }
 
         self.Gau_fun_customized = {
@@ -320,9 +321,9 @@ class DualProcessModel:
         }
 
     def reset(self):
-        self.EV_Dir = np.full(4, 0.5)
-        self.EV_Gau = np.full(4, 0.5)
-        self.AV = np.full(4, 0.5)
+        self.EV_Dir = np.full(4, self.default_EV)
+        self.EV_Gau = np.full(4, self.default_EV)
+        self.AV = np.full(4, self.default_EV)
         self.var = np.full(4, 1 / 12)
         self.M2 = np.full(4, 0.0)
         self.alpha = np.full(4, 1.0)
@@ -334,9 +335,9 @@ class DualProcessModel:
         self.obj_weight_history = []
 
     def restart_exp(self):
-        self.EV_Dir = np.full(4, 0.5)
-        self.EV_Gau = np.full(4, 0.5)
-        self.AV = np.full(4, 0.5)
+        self.EV_Dir = np.full(4, self.default_EV)
+        self.EV_Gau = np.full(4, self.default_EV)
+        self.AV = np.full(4, self.default_EV)
         self.var = np.full(4, 1 / 12)
         self.M2 = np.full(4, 0.0)
         self.alpha = np.full(4, 1.0)
@@ -345,28 +346,10 @@ class DualProcessModel:
         self.reward_history = [[] for _ in range(4)]
         self.process_chosen = []
 
-    def softmax(self, chosen_ev, alt1_ev, chosen, alt1, n1, n2):
-        c = 3 ** self.t - 1
-        num = np.exp(min(700, c * chosen_ev))
-        denom = num + np.exp(min(700, c * alt1_ev))
-        return np.clip(num / denom, 1e-32, 1 - 1e-32)
-
-    def weight_prop(self, chosen_ev, alt1_ev, chosen, alt1, n1, n2):
-        weight = chosen_ev / (chosen_ev + alt1_ev)
-        return np.clip(weight, 0.0001, 0.9999)
-
-    def weight_Gau(self, chosen_ev, alt1_ev, chosen, alt1, n1, n2):
-        n1 = np.clip(n1, 1, 9999)
-        n2 = np.clip(n2, 1, 9999)
-        mu_D = self.AV[chosen] - self.AV[alt1]
-        var_D = np.sqrt((self.var[chosen] * n1 + self.var[alt1] * n2) / (n1 + n2))
-        weight = norm.cdf(mu_D / var_D)
-        return np.clip(weight, 0.0001, 0.9999)
-
-    def weight_softmax(self, chosen_ev, alt1_ev, chosen, alt1, n1, n2):
-        num = np.exp(chosen_ev)
-        denom = num + np.exp(alt1_ev)
-        return np.clip(num / denom, 0.0001, 0.9999)
+    def softmax(self, x, t):
+        c = 3 ** t - 1
+        e_x = np.exp(np.clip(c * x, -700, 700))
+        return np.clip(e_x / e_x.sum(), 1e-12, 1 - 1e-12)
 
     def original_arbitration_mechanism(self, max_prob, dir_prob, dir_prob_alt, gau_prob, gau_prob_alt, trial_type=None,
                                        chosen=None):
@@ -449,8 +432,8 @@ class DualProcessModel:
 
     def Gau_naive_update(self, prior_mean, prior_var, reward, chosen, n=1):
         self.AV[chosen] = np.mean(self.reward_history[chosen])
-        self.var[chosen] = np.var(self.reward_history[chosen], ddof=1) if len(self.reward_history[chosen]) > 1 else (
-                                                                                                                            reward - self.prior_mean) ** 2
+        self.var[chosen] = np.var(self.reward_history[chosen], ddof=1) if len(self.reward_history[chosen]) > 1 else (reward - self.prior_mean) ** 2
+
     def Gau_naive_update_with_recency(self, prior_mean, prior_var, reward, chosen, n=1):
         delta = self.a * (reward - prior_mean)
         self.AV[chosen] += delta
@@ -1449,16 +1432,47 @@ class DualProcessModel:
             self.obj_weight_history.append(obj_weight)
             self.weight_history.append(weight_dir)
 
-            dir_prob = self.action_selection_Dir(self.EV_Dir[cs_mapped[0]], self.EV_Dir[cs_mapped[1]],
-                                                 cs_mapped[0], cs_mapped[1], len(self.reward_history[cs_mapped[0]]),
-                                                 len(self.reward_history[cs_mapped[1]]))
-            gau_prob = self.action_selection_Gau(self.EV_Gau[cs_mapped[0]], self.EV_Gau[cs_mapped[1]],
-                                                 cs_mapped[0], cs_mapped[1], len(self.reward_history[cs_mapped[0]]),
-                                                 len(self.reward_history[cs_mapped[1]]))
+            dir_prob = self.action_selection_Dir(np.array(self.EV_Dir[cs_mapped[0]], self.EV_Dir[cs_mapped[1]]))[cs_mapped[0]]
+            gau_prob = self.action_selection_Gau(np.array(self.EV_Gau[cs_mapped[0]], self.EV_Gau[cs_mapped[1]]))[cs_mapped[0]]
 
             prob_choice = EV_calculation(dir_prob, gau_prob, weight_dir)
 
             nll += -np.log(prob_choice if ch == cs_mapped[0] else 1 - prob_choice)
+
+            self.update(ch, r, t)
+
+        return nll
+
+    def distribution_entropy_id_igt_sgt_nll(self, params, reward, choice, trial, epsilon, choiceset):
+
+        nll = 0
+
+        self.weight_history = []
+        self.obj_weight_history = []
+
+        self.a = params[self.param_start + 1]
+        self.weight = params[self.param_start + 2]
+
+        for r, ch, t in zip(reward, choice, trial):
+
+            trial_cov = np.diag(self.var)
+
+            gau_entropy = 2 ** (multivariate_normal.entropy(self.AV, trial_cov))
+
+            dir_entropy = 2 ** (dirichlet.entropy(self.alpha))
+
+            obj_weight = gau_entropy / (dir_entropy + gau_entropy)
+            weight_dir = (self.weight * obj_weight) / (self.weight * obj_weight + (1 - self.weight) * (1 - obj_weight))
+
+            self.obj_weight_history.append(obj_weight)
+            self.weight_history.append(weight_dir)
+
+            dir_prob = self.action_selection_Dir(np.array(self.EV_Dir), self.t)[ch]
+            gau_prob = self.action_selection_Gau(np.array(self.EV_Gau), self.t2)[ch]
+
+            prob_choice = EV_calculation(dir_prob, gau_prob, weight_dir)
+
+            nll += -np.log(max(epsilon, prob_choice))
 
             self.update(ch, r, t)
 
@@ -1626,18 +1640,25 @@ class DualProcessModel:
 
         return nll
 
-    def negative_log_likelihood(self, params, reward, choiceset, choice):
+    def negative_log_likelihood(self, params, reward, choice, choiceset=None):
 
         self.reset()
 
         self.t = params[self.param_start]
+
+        if self.num_t == 1:
+            self.t2 = self.t
+        elif self.num_t == 2:
+            self.t2 = params[self.param_start + 3]
+
+        epsilon = 1e-12
 
         trial_onetask = np.arange(1, self.num_trials + 1)
 
         # # in this within-subject task, we need to combine two sets of trials
         # trial = np.concatenate((trial_onetask, trial_onetask))
 
-        return self.model_mapping[self.model](params, reward, choiceset, choice, trial_onetask)
+        return self.model_mapping[self.model](params, reward, choice, trial_onetask, epsilon, choiceset)
 
     def negative_log_likelihood_weight(self, params, reward, choiceset, choice):
 
@@ -1650,22 +1671,16 @@ class DualProcessModel:
         return self.model_mapping[self.model](params, reward, choiceset, choice, trial)
 
     def fit(self, data, model='Entropy_Dis_ID', num_iterations=100, arbi_option='Max Prob', Gau_fun='Naive_Recency',
-            Dir_fun='Linear+Recency', weight_Gau='softmax', weight_Dir='softmax'):
+            Dir_fun='Linear_Recency', weight_Gau='softmax', weight_Dir='softmax', a_min=1e-32, num_t=1):
 
         self.model = model
+        self.a_min = a_min
+        self.num_t = num_t
         self.arbitration_function = self.arbitration_mapping[arbi_option]
 
         # Assign the methods based on the provided strings
         self.action_selection_Dir = self.selection_mapping_Dir.get(weight_Dir)
         self.action_selection_Gau = self.selection_mapping_Gau.get(weight_Gau)
-
-        # Check if both selections are 'weight'
-        if self.action_selection_Dir == self.weight_prop and self.action_selection_Gau in (self.weight_prop,
-                                                                                           self.weight_Gau,
-                                                                                           self.weight_softmax):
-            self.weight_fun = 'pure_weight'
-        else:
-            self.weight_fun = 'mixed_weight'
 
         self.Gau_update_fun = self.Gau_fun_customized.get(Gau_fun, self.Gau_fun_mapping[self.model])
         self.Dir_update_fun = self.Dir_fun_customized.get(Dir_fun, self.Dir_fun_mapping[self.model])
@@ -1686,8 +1701,8 @@ class DualProcessModel:
             # Submitting jobs to the executor for each participant
             for participant_id, participant_data in data.items():
                 # fit_participant is the function to be executed in parallel
-                future = executor.submit(fit_participant, self, participant_id, participant_data, model,
-                                         self.weight_fun, num_iterations)
+                future = executor.submit(fit_participant, self, participant_id, participant_data, model, self.task,
+                                         num_iterations)
                 futures.append(future)
 
             # Collecting results as they complete

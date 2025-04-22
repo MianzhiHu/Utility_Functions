@@ -667,7 +667,7 @@ class ComputationalModels:
     # Now we define the negative log likelihood function for the ACT-R model because it requires updating EVs before
     # calculating the likelihood
     # ==================================================================================================================
-    def ACTR_nll(self, reward, choiceset, choice, trial, epsilon):
+    def ACTR_nll(self, reward, choice, trial, epsilon, choiceset=None):
 
         nll = 0
 
@@ -683,7 +683,7 @@ class ComputationalModels:
 
         return nll
 
-    def WSLS_nll(self, reward, choiceset, choice, trial, epsilon):
+    def WSLS_nll(self, reward, choice, trial, epsilon, choiceset=None):
 
         nll = 0
 
@@ -697,7 +697,7 @@ class ComputationalModels:
 
         return nll
 
-    def standard_nll(self, reward, choiceset, choice, trial, epsilon):
+    def standard_nll(self, reward, choice, trial, epsilon, choiceset=None):
 
         nll = 0
 
@@ -713,7 +713,7 @@ class ComputationalModels:
 
         return nll
 
-    def igt_nll(self, reward, choice, trial, epsilon):
+    def igt_nll(self, reward, choice, trial, epsilon, choiceset=None):
 
         nll = 0
 
@@ -724,7 +724,7 @@ class ComputationalModels:
 
         return nll
 
-    def negative_log_likelihood(self, params, reward, choiceset, choice):
+    def negative_log_likelihood(self, params, reward, choice, choiceset=None):
         """
         Compute the negative log likelihood for the given parameters and data.
 
@@ -751,7 +751,7 @@ class ComputationalModels:
         # # in this within-subject task, we need to combine two sets of trials
         # trial = np.concatenate((trial_onetask, trial_onetask))
 
-        return self.nll_function(reward, choiceset, choice, trial_onetask, epsilon)
+        return self.nll_function(reward, choice, trial_onetask, epsilon, choiceset)
 
     def fit(self, data, num_iterations=1000, beta_lower=-1, beta_upper=1):
 
@@ -1196,23 +1196,41 @@ def dict_generator(df, task='ABCD'):
     Returns:
     - A dictionary of the dataframe.
     """
+    def find_col(candidates):
+        """Return first candidate that’s in df.columns, else error."""
+        for col in candidates:
+            if col in df.columns:
+                return col
+        raise KeyError(f"None of {candidates!r} found in DataFrame columns")
+
+    # define for each task which output‐keys map to which column‐name candidates
+    COLUMN_MAP = {
+        'ABCD': {
+            'reward':   ['Reward'],
+            'choiceset':['SetSeen.'],
+            'choice':   ['KeyResponse'],
+        },
+        'IGT_SGT': {
+            'reward': ['outcome', 'Reward'],
+            'choice': ['choice', 'keyResponse'],
+        }
+    }
+
+    if task not in COLUMN_MAP:
+        raise ValueError(f"Unsupported task {task!r}")
+
+    # optional: allow different grouping columns too
+    group_col = find_col(['Subnum', 'subnum', 'SubjectID'])
+
     d = {}
-    if task == 'ABCD':
-        for name, group in df.groupby('Subnum'):
-            d[name] = {
-                'reward': group['Reward'].tolist(),
-                'choiceset': group['SetSeen.'].tolist(),
-                'choice': group['KeyResponse'].tolist(),
-            }
-    elif task == 'IGT_SGT':
-        for name, group in df.groupby('Subnum'):
-            d[name] = {
-                'reward': group['outcome'].tolist(),
-                'choice': group['choice'].tolist(),
-            }
+    for subject_id, group in df.groupby(group_col):
+        entry = {}
+        for key, candidates in COLUMN_MAP[task].items():
+            actual_col = find_col(candidates)
+            entry[key] = group[actual_col].tolist()
+        d[subject_id] = entry
 
     return d
-
 
 def extract_all_parameters(param_str):
     """
@@ -1337,6 +1355,54 @@ def model_recovery(model_names, models, reward_means, reward_var, AB_freq=100, C
 
     return all_sim, all_fit, all_best_fitting_model
 
+# ======================================================================================================================
+# Moving window approach
+# ======================================================================================================================
+def create_sliding_windows(data, window_size, id_col):
+    """Create sliding windows of specified size from the data per participant."""
+    max_window_steps = max(len(group) - window_size + 1 for _, group in data.groupby(id_col))
+
+    for step in range(max_window_steps):
+        window_data = []
+        for participant_id, participant_data in data.groupby(id_col):
+            if step < len(participant_data) - window_size + 1:
+                window = participant_data.iloc[step:step + window_size].copy()
+                window_data.append(window)
+        yield pd.concat(window_data, ignore_index=True)
+
+
+def moving_window_model_fitting(data, model, task='ABCD', num_iterations=100, window_size=10,
+                                id_col='Subnum', **kwargs):
+    """
+    Fit the model to the data using a moving window approach.
+    
+    Parameters:
+        data: DataFrame containing the behavioral data
+        model: ComputationalModel instance
+        task: String identifying the task type ('ABCD' or 'IGT_SGT')
+        num_iterations: Number of iterations for model fitting
+        window_size: Size of the sliding window
+        id_col: Column name for participant ID
+        **kwargs: Additional keyword arguments to pass to model.fit()
+    """
+    window_results = []
+
+    for i, window_data in enumerate(create_sliding_windows(data, window_size, id_col)):
+        max_window_steps = max(len(group) - window_size + 1 for _, group in data.groupby(id_col))
+        print(f'Fitting window {i + 1}/{max_window_steps}')
+
+        window_dict = dict_generator(window_data, task)
+        window_fit = model.fit(window_dict, num_iterations=num_iterations, **kwargs)
+
+        for result in window_fit.to_dict('records'):
+            result.update({
+                'window_id': i + 1,
+                'window_start': i + 1,
+                'window_end': i + window_size
+            })
+            window_results.append(result)
+
+    return pd.DataFrame(window_results)
 
 # ======================================================================================================================
 # Testing Code
