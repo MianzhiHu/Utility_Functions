@@ -41,11 +41,12 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
         k = 2  # Initialize the cumulative number of parameters
     elif model_type in ('delta_asymmetric', 'decay_fre', 'ACTR', 'ACTR_Ori', 'WSLS', 'mean_var_utility'):
         k = 3
+    elif model_type in ('delta_PVL'):
+        k = 4
     elif model_type in ('sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV', 'delta_decay'):
         k = model.num_params
 
     model.iteration = 0
-
     best_nll = 100000  # Initialize best negative log likelihood to a large number
     best_initial_guess = None
     best_parameters = None
@@ -60,6 +61,10 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
         if model_type in ('decay', 'delta', 'decay_choice', 'decay_win'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999))
+        elif model_type in ('delta_PVL'):
+            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999))
         elif model_type in ('decay_fre'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(beta_lower, beta_upper)]
@@ -180,6 +185,7 @@ class ComputationalModels:
         self.updating_mapping = {
             'delta': self.delta_update,
             'delta_asymmetric': self.delta_asymmetric_update,
+            'delta_PVL': self.delta_PVL_update,
             'decay': self.decay_update,
             'decay_fre': self.decay_fre_update,
             'decay_choice': self.decay_choice_update,
@@ -200,6 +206,7 @@ class ComputationalModels:
         self.nll_mapping_ABCD = {
             'delta': self.standard_nll,
             'delta_asymmetric': self.standard_nll,
+            'delta_PVL': self.standard_nll,
             'decay': self.standard_nll,
             'decay_fre': self.standard_nll,
             'decay_choice': self.standard_nll,
@@ -217,6 +224,7 @@ class ComputationalModels:
         self.nll_mapping_IGT_SGT = {
             'delta': self.igt_nll,
             'delta_asymmetric': self.igt_nll,
+            'delta_PVL': self.igt_nll,
             'decay': self.igt_nll,
             'decay_fre': self.igt_nll,
             'decay_choice': self.igt_nll,
@@ -262,6 +270,7 @@ class ComputationalModels:
         self.softmax_mapping = {
             'delta': self.softmax,
             'delta_asymmetric': self.softmax,
+            'delta_PVL': self.softmax,
             'decay': self.softmax,
             'decay_fre': self.softmax,
             'decay_choice': self.softmax,
@@ -416,6 +425,11 @@ class ComputationalModels:
         prediction_error = reward - self.EVs[chosen]
         self.EVs[chosen] += (prediction_error > 0) * self.a * prediction_error + (prediction_error < 0) * self.b * \
                             prediction_error
+
+    def delta_PVL_update(self, chosen, reward, trial, choiceset=None):
+        utility = (np.abs(reward) ** self.b) * (reward >= 0) + (-self.lamda * (np.abs(reward) ** self.b)) * (reward < 0)
+        prediction_error = utility - self.EVs[chosen]
+        self.EVs[chosen] += self.a * prediction_error
 
     def decay_update(self, chosen, reward, trial, choiceset=None):
         self.EVs[chosen] += reward
@@ -740,9 +754,14 @@ class ComputationalModels:
         self.t = params[0]
         self.a = params[1]
         self.p_ws, self.p_ls = params[0], params[2] if self.model_type == 'WSLS' else None
-        self.b = params[2] if (self.num_params == 3 or self.model_type == 'delta_asymmetric') else self.a
+        self.b = params[2] if (self.num_params == 3 or self.model_type in ('delta_asymmetric', 'delta_PVL')) else self.a
         self.tau = params[2] if self.model_type in ('ACTR', 'ACTR_Ori') else None
-        self.lamda = params[2] if self.model_type == 'mean_var_utility' else None
+        if self.model_type == 'mean_var_utility':
+            self.lamda = params[2]
+        elif self.model_type == 'delta_PVL':
+            self.lamda = params[3]
+        else:
+            self.lamda = None
 
         epsilon = 1e-12
 
@@ -1211,8 +1230,8 @@ def dict_generator(df, task='ABCD'):
             'choice':   ['KeyResponse'],
         },
         'IGT_SGT': {
-            'reward': ['outcome', 'Reward'],
-            'choice': ['choice', 'keyResponse'],
+            'reward': ['outcome', 'Reward', 'SGTReward'],
+            'choice': ['choice', 'keyResponse', 'SGTBinChoice'],
         }
     }
 
@@ -1220,7 +1239,7 @@ def dict_generator(df, task='ABCD'):
         raise ValueError(f"Unsupported task {task!r}")
 
     # optional: allow different grouping columns too
-    group_col = find_col(['Subnum', 'subnum', 'SubjectID'])
+    group_col = find_col(['Subnum', 'subnum', 'SubjectID', 'ID'])
 
     d = {}
     for subject_id, group in df.groupby(group_col):
