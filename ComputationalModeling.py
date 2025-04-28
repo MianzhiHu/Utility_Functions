@@ -1230,7 +1230,7 @@ def dict_generator(df, task='ABCD'):
             'choice':   ['KeyResponse'],
         },
         'IGT_SGT': {
-            'reward': ['outcome', 'Reward', 'SGTReward'],
+            'reward': ['outcome.1', 'outcome', 'Reward', 'SGTReward'],
             'choice': ['choice', 'keyResponse', 'SGTBinChoice'],
         }
     }
@@ -1239,7 +1239,7 @@ def dict_generator(df, task='ABCD'):
         raise ValueError(f"Unsupported task {task!r}")
 
     # optional: allow different grouping columns too
-    group_col = find_col(['Subnum', 'subnum', 'SubjectID', 'ID'])
+    group_col = find_col(['subjID', 'Subnum', 'subnum', 'SubjectID', 'ID', 'subject'])
 
     d = {}
     for subject_id, group in df.groupby(group_col):

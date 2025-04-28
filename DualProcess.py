@@ -5,6 +5,8 @@ import pandas as pd
 import time
 import random
 import ast
+
+from numpy.ma.core import min_filler
 from scipy.optimize import minimize, OptimizeResult
 from scipy.stats import dirichlet, multivariate_normal, entropy, norm
 from concurrent.futures import ProcessPoolExecutor
@@ -311,6 +313,7 @@ class DualProcessModel:
             'Naive': self.Gau_naive_update,
             'Bayesian': self.Gau_bayesian_update,
             'Naive_Recency': self.Gau_naive_update_with_recency,
+            'Naive_Recency_MinMax': self.Gau_naive_update_with_recency_minmax,
             'Bayesian_Recency': self.Gau_bayesian_update_with_recency
         }
 
@@ -438,6 +441,21 @@ class DualProcessModel:
         delta = self.a * (reward - prior_mean)
         self.AV[chosen] += delta
         self.M2[chosen] += delta * (reward - self.AV[chosen])
+        self.var[chosen] = self.M2[chosen] / np.clip((len(self.reward_history[chosen]) - 1), 1, 9999)
+        
+    def Gau_naive_update_with_recency_minmax(self, prior_mean, prior_var, reward, chosen, n=1):
+        all_rewards = np.array(sum(self.reward_history, []))
+
+        min_r = np.nanmin(all_rewards)
+        max_r = np.nanmax(all_rewards)
+        reward_range = max_r - min_r
+        fallback = np.array(0.5, dtype=float) # for the first trial where no range is available, assume a reference value of 0.5
+
+        reward_normalized = np.divide(reward - min_r, reward_range, out=fallback, where=(reward_range != 0))
+
+        delta = self.a * (reward_normalized - prior_mean)
+        self.AV[chosen] += delta
+        self.M2[chosen] += delta * (reward_normalized - self.AV[chosen])
         self.var[chosen] = self.M2[chosen] / np.clip((len(self.reward_history[chosen]) - 1), 1, 9999)
 
     def Dir_update(self, chosen, reward, AV_total, trial):
