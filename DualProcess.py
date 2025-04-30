@@ -26,14 +26,11 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
     elif model_type in ('Param', 'Entropy_Dis_ID'):
         k = 3
     elif model_type == ('DP_Uncertainty_Sensitivity'):
-        k = 5
+        k = 4
     elif model_type == 'Multi_Param':
         k = 7
     else:
         k = 1
-
-    if model.num_t == 2:
-        k = k + 1
 
     model.iteration = 0
 
@@ -59,13 +56,13 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
             bounds = [(0.0001, 4.9999), (0.0001, 0.9999)]
         elif model_type in ('Entropy_Dis_ID', 'Param'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
-            bounds = [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999)]
+                             np.random.uniform(0.0001, 0.9999)]
+            bounds = [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999)]
         elif model_type == 'DP_Uncertainty_Sensitivity':
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999)]
-            bounds = [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999),
+            bounds = [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999),
                       (0.0001, 0.9999)]
         elif model_type == 'Multi_Param':
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
@@ -77,6 +74,11 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
         else:
             initial_guess = [np.random.uniform(0.0001, 4.9999)]
             bounds = [(0.0001, 4.9999)]
+
+        if model.num_t == 2:
+            k = k + 1
+            initial_guess.append(np.random.uniform(0.0001, 4.9999))
+            bounds.append((0.0001, 4.9999))
 
         if task == 'ABCD':
             result = minimize(model.negative_log_likelihood, initial_guess,
@@ -1436,7 +1438,7 @@ class DualProcessModel:
         self.a = params[self.param_start + 1]
         self.weight = params[self.param_start + 2]
         self.tau_gau = params[self.param_start + 3]
-        self.tau_dir = params[self.param_start + 4]
+        # self.tau_dir = params[self.param_start + 4]
 
         for r, ch, t in zip(reward, choice, trial):
 
@@ -1444,7 +1446,7 @@ class DualProcessModel:
 
             gau_entropy = 2 ** ((multivariate_normal.entropy(self.AV, trial_cov)) * self.tau_gau)
 
-            dir_entropy = 2 ** ((dirichlet.entropy(self.alpha)) * self.tau_dir)
+            dir_entropy = 2 ** ((dirichlet.entropy(self.alpha)))
 
             obj_weight = gau_entropy / (dir_entropy + gau_entropy)
             weight_dir = (self.weight * obj_weight) / (self.weight * obj_weight + (1 - self.weight) * (1 - obj_weight))
