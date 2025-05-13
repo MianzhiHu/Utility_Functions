@@ -149,25 +149,25 @@ def generate_random_trial_sequence(AB_freq, CD_freq):
 
 
 class DualProcessModel:
-    def __init__(self, n_samples=1000, num_trials=250, task="ABCD", default_EV=0.5):
+    def __init__(self, n_samples=1000, task="ABCD", default_EV=0.5, num_options=4):
+        self.num_options = num_options
         self.task = task
         self.default_EV = float(default_EV)
         self.num_t = None
         self.a_min = None
         self.iteration = None
-        self.num_trials = num_trials
-        self.EVs = np.full(4, self.default_EV)
-        self.default_EVs = np.full(4, self.default_EV)
-        self.EV_Dir = np.full(4, self.default_EV)
-        self.EV_Gau = np.full(4, self.default_EV)
-        self.AV = np.full(4, self.default_EV)
-        self.var = np.full(4, 1 / 12)
-        self.M2 = np.full(4, 0.0)
-        self.alpha = np.full(4, 1)
-        self.gamma_a = np.full(4, 0.5)
-        self.gamma_b = np.full(4, 0.0)
+        self.EVs = np.full(self.num_options, self.default_EV)
+        self.default_EVs = np.full(self.num_options, self.default_EV)
+        self.EV_Dir = np.full(self.num_options, self.default_EV)
+        self.EV_Gau = np.full(self.num_options, self.default_EV)
+        self.AV = np.full(self.num_options, self.default_EV)
+        self.var = np.full(self.num_options, 1 / 12)
+        self.M2 = np.full(self.num_options, 0.0)
+        self.alpha = np.full(self.num_options, 1)
+        self.gamma_a = np.full(self.num_options, 0.5)
+        self.gamma_b = np.full(self.num_options, 0.0)
         self.n_samples = n_samples
-        self.reward_history = [[0] for _ in range(4)]
+        self.reward_history = [[0] for _ in range(self.num_options)]
         self.process_chosen = []
         self.weight_history = []
         self.obj_weight_history = []
@@ -310,29 +310,29 @@ class DualProcessModel:
         }
 
     def reset(self):
-        self.EV_Dir = np.full(4, self.default_EV)
-        self.EV_Gau = np.full(4, self.default_EV)
-        self.AV = np.full(4, self.default_EV)
-        self.var = np.full(4, 1 / 12)
-        self.M2 = np.full(4, 0.0)
-        self.alpha = np.full(4, 1.0)
-        self.gamma_a = np.full(4, 0.5)
-        self.gamma_b = np.full(4, 0.0)
-        self.reward_history = [[] for _ in range(4)]
+        self.EV_Dir = np.full(self.num_options, self.default_EV)
+        self.EV_Gau = np.full(self.num_options, self.default_EV)
+        self.AV = np.full(self.num_options, self.default_EV)
+        self.var = np.full(self.num_options, 1 / 12)
+        self.M2 = np.full(self.num_options, 0.0)
+        self.alpha = np.full(self.num_options, 1.0)
+        self.gamma_a = np.full(self.num_options, 0.5)
+        self.gamma_b = np.full(self.num_options, 0.0)
+        self.reward_history = [[] for _ in range(self.num_options)]
         self.process_chosen = []
         self.weight_history = []
         self.obj_weight_history = []
 
     def restart_exp(self):
-        self.EV_Dir = np.full(4, self.default_EV)
-        self.EV_Gau = np.full(4, self.default_EV)
-        self.AV = np.full(4, self.default_EV)
-        self.var = np.full(4, 1 / 12)
-        self.M2 = np.full(4, 0.0)
-        self.alpha = np.full(4, 1.0)
-        self.gamma_a = np.full(4, 0.5)
-        self.gamma_b = np.full(4, 0.0)
-        self.reward_history = [[] for _ in range(4)]
+        self.EV_Dir = np.full(self.num_options, self.default_EV)
+        self.EV_Gau = np.full(self.num_options, self.default_EV)
+        self.AV = np.full(self.num_options, self.default_EV)
+        self.var = np.full(self.num_options, 1 / 12)
+        self.M2 = np.full(self.num_options, 0.0)
+        self.alpha = np.full(self.num_options, 1.0)
+        self.gamma_a = np.full(self.num_options, 0.5)
+        self.gamma_b = np.full(self.num_options, 0.0)
+        self.reward_history = [[] for _ in range(self.num_options)]
         self.process_chosen = []
 
     def softmax(self, x, t):
@@ -1478,7 +1478,7 @@ class DualProcessModel:
 
         epsilon = 1e-12
 
-        trial_onetask = np.arange(1, self.num_trials + 1)
+        trial_onetask = np.arange(1, len(reward) + 1)
 
         # # in this within-subject task, we need to combine two sets of trials
         # trial = np.concatenate((trial_onetask, trial_onetask))
@@ -1491,7 +1491,7 @@ class DualProcessModel:
 
         self.param_start = -1
 
-        trial = np.arange(1, self.num_trials + 1)
+        trial = np.arange(1, len(reward) + 1)
 
         return self.model_mapping[self.model](params, reward, choiceset, choice, trial)
 
