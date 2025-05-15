@@ -35,7 +35,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
     print(f"Fitting participant {participant_id}...")
     start_time = time.time()
 
-    total_n = model.num_trials
+    total_n = len(pdata['reward'])
 
     if model_type in ('decay', 'delta', 'decay_choice', 'decay_win'):
         k = 2  # Initialize the cumulative number of parameters
@@ -764,8 +764,7 @@ class ComputationalModels:
             self.lamda = None
 
         epsilon = 1e-12
-
-        trial_onetask = np.arange(1, self.num_trials + 1)
+        trial_onetask = np.arange(1, len(reward) + 1)
 
         # # in this within-subject task, we need to combine two sets of trials
         # trial = np.concatenate((trial_onetask, trial_onetask))
@@ -1203,7 +1202,7 @@ def compute_exceedance_prob(alpha, n_samples=100000):
     return exceedance_probs
 
 # ======================================================================================================================
-# End of the Model Comparison Functions; now we define the prepatory functions
+# End of the Model Comparison Functions; now we define the preparatory functions
 # ======================================================================================================================
 def dict_generator(df, task='ABCD'):
     """
@@ -1230,8 +1229,13 @@ def dict_generator(df, task='ABCD'):
             'choice':   ['KeyResponse'],
         },
         'IGT_SGT': {
-            'reward': ['outcome.1', 'outcome', 'Reward', 'SGTReward'],
-            'choice': ['choice', 'keyResponse', 'SGTBinChoice'],
+            'reward': ['outcome.1', 'outcome', 'Reward', 'SGTReward', 'OutcomeValue'],
+            'choice': ['choice', 'keyResponse', 'SGTBinChoice', 'Optimal_Choice'],
+        },
+        'VS': {
+            'reward': ['OutcomeValue'],
+            'choice': ['Optimal_Choice'],
+            'react_time': ['RT']
         }
     }
 
@@ -1239,7 +1243,7 @@ def dict_generator(df, task='ABCD'):
         raise ValueError(f"Unsupported task {task!r}")
 
     # optional: allow different grouping columns too
-    group_col = find_col(['subjID', 'Subnum', 'subnum', 'SubjectID', 'ID', 'subject'])
+    group_col = find_col(['subjID', 'Subnum', 'subnum', 'SubjectID', 'ID', 'subject', 'SubNo'])
 
     d = {}
     for subject_id, group in df.groupby(group_col):

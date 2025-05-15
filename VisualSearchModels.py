@@ -18,16 +18,8 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
 
     total_n = len(pdata['reward'])  # Total number of trials
 
-    if model_type in ('decay', 'delta', 'decay_choice', 'decay_win', 'WSLS'):
-        k = 2  # Initialize the cumulative number of parameters
-    elif model_type in ('delta_asymmetric', 'decay_fre', 'ACTR', 'ACTR_Ori', 'WSLS_delta', 'mean_var_utility'):
-        k = 3
-    elif model_type in ('delta_PVL'):
-        k = 4
-    elif model_type in ('WSLS_delta_weight', 'WSLS_decay_weight'):
-        k = 5
-    elif model_type in ('sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV', 'delta_decay'):
-        k = model.num_params
+    # get the number of parameters for the model
+    k = model._PARAM_COUNT.get(model_type)
 
     model.iteration = 0
     best_nll = 100000  # Initialize best negative log likelihood to a large number
@@ -44,7 +36,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
         if model_type in ('decay', 'delta', 'decay_choice', 'decay_win'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999))
-        elif model_type in ('delta_PVL'):
+        elif model_type in ('delta_PVL', 'delta_PVL_relative', 'decay_PVL_relative'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999))
@@ -88,6 +80,30 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
                              np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999))
+        elif model_type == 'RT_exp_basic':
+            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 23.9999),
+                             np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0, 0.01)]
+            bounds = ((0.0001, 4.9999),(0.0, 0.01), (0.0001, 23.9999), (0.0001, 23.9999))
+        if model_type in ('RT_delta', 'RT_decay'):
+            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 23.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 23.9999), (0.0001, 23.9999))
+        elif model_type in ('RT_exp_delta', 'RT_exp_decay'):
+            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 23.9999),
+                             np.random.uniform(0.0, 0.01)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 23.9999), (0.0001, 23.9999), (0.0, 0.01))
+        elif model_type in ('RT_delta_PVL', 'RT_delta_PVL', 'RT_decay_PVL'):
+            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 23.9999),
+                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 23.9999), (0.0001, 23.9999), (0.0001, 0.9999),
+                      (0.0001, 4.9999))
+        elif model_type in ('hybrid_delta_delta'):
+            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 23.9999),
+                             np.random.uniform(0.0001, 0.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 23.9999), (0.0001, 23.9999), (0.0001, 0.9999))
 
         result = minimize(model.negative_log_likelihood, initial_guess,
                           args=(pdata['reward'], pdata['choice'], pdata['react_time']),
@@ -132,7 +148,7 @@ class VisualSearchModels:
         self.num_params = num_params
         self.choices_count = np.zeros(self.num_options)
         self.condition = condition
-        self.possible_options = [0, 1, 2, 3]
+        self.possible_options = [0, 1]
         self.memory_weights = []
         self.choice_history = []
         self.reward_history = []
@@ -140,17 +156,79 @@ class VisualSearchModels:
         self.reward_history_by_option = {option: [] for option in self.possible_options}
         self.AllProbs = []
         self.PE = []
-
-        self.t = None
-        self.a = None
-        self.b = None
-        self.s = None
-        self.tau = None
-        self.lamda = None
-        self.w = None  # This is for the addition of the IRL model which is not implemented yet
-        self.p_ws = None # Win Stay
-        self.p_ls = None # Lose Shift
         self.iteration = 0
+
+        # define for each model_type a dict of { attr_name: param_index }
+        self._PARAM_MAP = {
+            'delta': {'t': 0, 'a': 1},
+            'delta_asymmetric': {'t': 0, 'a': 1, 'b': 2},
+            'delta_PVL': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
+            'delta_PVL_relative': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
+            'decay': {'t': 0, 'a': 1},
+            'decay_fre': {'t': 0, 'a': 1, 'b': 2},
+            'decay_PVL_relative': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
+            'decay_choice': {'t': 0, 'a': 1},
+            'decay_win': {'t': 0, 'a': 1},
+            'delta_decay': {'t': 0, 'a': 1, 'b': 2},
+            'mean_var_utility': {'t': 0, 'a': 1, 'lamda': 2},
+            'sampler_decay': {'t': 0, 'a': 1},
+            'sampler_decay_PE': {'t': 0, 'a': 1},
+            'sampler_decay_AV': {'t': 0, 'a': 1},
+            'ACTR_Ori': { 'a': 1, 's': 0, 'tau': 2},
+            'ACTR': {'t': 0, 'a': 1, 'tau': 2},
+            'WSLS': {'p_ws': 0, 'p_ls': 1},
+            'WSLS_delta': {'a': 1, 'p_ws': 0, 'p_ls': 2},
+            'WSLS_decay_weight': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'w': 4},
+            'WSLS_delta_weight': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'w': 4},
+            'RT_exp_basic': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'k': 1},
+            'RT_delta': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3},
+            'RT_decay': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3},
+            'RT_exp_delta': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'k': 4},
+            'RT_exp_decay': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'k': 4},
+            'RT_delta_PVL': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'b': 4, 'lamda': 5},
+            'RT_decay_PVL': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'b': 4, 'lamda': 5},
+            'hybrid_delta_delta': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'w': 4},
+        }
+
+        # any attributes you always want to have, even if None
+        self._DEFAULT_ATTRS = [
+            'RT_initial_suboptimal', 'RT_initial_optimal', 'RT_initial',
+            'k', 's', 't', 'a', 'b', 'tau', 'lamda',
+            'p_ws', 'p_ls', 'w',
+        ]
+
+        # initialize all of your attrs to None
+        for attr in self._DEFAULT_ATTRS:
+            setattr(self, attr, None)
+
+        self._PARAM_COUNT = {
+            **dict.fromkeys(
+                ('decay', 'delta', 'decay_choice', 'decay_win', 'WSLS'),
+                2
+            ),
+            **dict.fromkeys(
+                ('delta_asymmetric', 'decay_fre', 'ACTR', 'ACTR_Ori', 'WSLS_delta', 'mean_var_utility'),
+                3
+            ),
+            **dict.fromkeys(
+                ('delta_PVL', 'delta_PVL_relative', 'decay_PVL_relative',
+                 'RT_exp_basic', 'RT_delta', 'RT_decay'),
+                4
+            ),
+            **dict.fromkeys(
+                ('WSLS_delta_weight', 'WSLS_decay_weight',
+                 'RT_exp_delta', 'RT_exp_decay', 'hybrid_delta_delta'),
+                5
+            ),
+            **dict.fromkeys(
+                ('RT_delta_PVL', 'RT_decay_PVL'),
+                6
+            ),
+            **dict.fromkeys(
+                ('sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV', 'delta_decay'),
+                None  # will use model.num_params instead
+            ),
+        }
 
         self.condition_initialization = {
             "Gains": 0.5,
@@ -159,10 +237,12 @@ class VisualSearchModels:
         }
 
         self.EVs = np.full(self.num_options, self.condition_initialization[self.condition])
+        self.RTs = np.full(self.num_options, 3.0)
         self.Probs = np.full(self.num_options, 0.25)
         self.mean = np.full(self.num_options, self.condition_initialization[self.condition])
         self.var = np.full(self.num_options, 1 / 12)
         self.AV = self.condition_initialization[self.condition]
+        self.RT_AV = None
 
         # Model type
         self.model_type = model_type
@@ -173,8 +253,10 @@ class VisualSearchModels:
             'delta': self.delta_update,
             'delta_asymmetric': self.delta_asymmetric_update,
             'delta_PVL': self.delta_PVL_update,
+            'delta_PVL_relative': self.delta_PVL_relative_update,
             'decay': self.decay_update,
             'decay_fre': self.decay_fre_update,
+            'decay_PVL_relative': self.decay_PVL_relative_update,
             'decay_choice': self.decay_choice_update,
             'decay_win': self.decay_win_update,
             'delta_decay': self.delta_update,
@@ -185,7 +267,15 @@ class VisualSearchModels:
             'WSLS': self.WSLS_update,
             'WSLS_delta': self.WSLS_delta_update,
             'WSLS_delta_weight': self.WSLS_delta_weight_update,
-            'WSLS_decay_weight': self.WSLS_decay_weight_update
+            'WSLS_decay_weight': self.WSLS_decay_weight_update,
+            'RT_exp_basic': self.RT_exp_basic,
+            'RT_delta': self.RT_delta,
+            'RT_decay': self.RT_decay,
+            'RT_exp_delta': self.RT_exp_delta,
+            'RT_exp_decay': self.RT_exp_decay,
+            'RT_delta_PVL': self.RT_delta_PVL,
+            'RT_decay_PVL': self.RT_decay_PVL,
+            'hybrid_delta_delta': self.hybrid_delta_delta,
         }
 
         self.updating_function = self.updating_mapping[self.model_type]
@@ -195,8 +285,10 @@ class VisualSearchModels:
             'delta': self.standard_nll,
             'delta_asymmetric': self.standard_nll,
             'delta_PVL': self.standard_nll,
+            'delta_PVL_relative': self.standard_nll,
             'decay': self.standard_nll,
             'decay_fre': self.standard_nll,
+            'decay_PVL_relative': self.standard_nll,
             'decay_choice': self.standard_nll,
             'decay_win': self.standard_nll,
             'delta_decay': self.standard_nll,
@@ -207,7 +299,15 @@ class VisualSearchModels:
             'WSLS': self.WSLS_nll,
             'WSLS_delta': self.WSLS_nll,
             'WSLS_delta_weight': self.WSLS_nll,
-            'WSLS_decay_weight': self.weight_nll
+            'WSLS_decay_weight': self.weight_nll,
+            'RT_exp_basic': self.standard_nll,
+            'RT_delta': self.standard_nll,
+            'RT_decay': self.standard_nll,
+            'RT_exp_delta': self.standard_nll,
+            'RT_exp_decay': self.standard_nll,
+            'RT_delta_PVL': self.standard_nll,
+            'RT_decay_PVL': self.standard_nll,
+            'hybrid_delta_delta': self.hybrid_nll,
         }
 
         self.nll_function = self.nll_mapping_VS[self.model_type]
@@ -226,8 +326,10 @@ class VisualSearchModels:
         self.PE = []
 
         self.EVs = np.full(self.num_options, self.condition_initialization[self.condition])
+        self.RTs = np.full(self.num_options, 3.0)
         self.Probs = np.full(self.num_options, 0.25)
         self.AV = self.condition_initialization[self.condition]
+        self.RT_AV = None
         self.mean = np.full(self.num_options, self.condition_initialization[self.condition])
         self.var = np.full(self.num_options, 1 / 12)
 
@@ -280,6 +382,13 @@ class VisualSearchModels:
         prediction_error = utility - self.EVs[chosen]
         self.EVs[chosen] += self.a * prediction_error
 
+    def delta_PVL_relative_update(self, chosen, reward, rt, trial):
+        reward_diff = reward - self.AV
+        self.AV += reward_diff / (trial + 1)
+        utility = (np.abs(reward) ** self.b) * (reward_diff >= 0) + ((1 / self.lamda) * (np.abs(reward) ** self.b)) * (reward_diff < 0)
+        prediction_error = utility - self.EVs[chosen]
+        self.EVs[chosen] += self.a * prediction_error
+
     def decay_update(self, chosen, reward, rt, trial):
         self.EVs[chosen] += reward
         self.EVs = self.EVs * (1 - self.a)
@@ -291,6 +400,13 @@ class VisualSearchModels:
 
     def decay_choice_update(self, chosen, reward, rt, trial):
         self.EVs[chosen] += 1
+        self.EVs = self.EVs * (1 - self.a)
+
+    def decay_PVL_relative_update(self, chosen, reward, rt, trial):
+        reward_diff = reward - self.AV
+        self.AV += reward_diff / (trial + 1)
+        utility = (np.abs(reward) ** self.b) * (reward_diff >= 0) + ((1 / self.lamda) * (np.abs(reward) ** self.b)) * (reward_diff < 0)
+        self.EVs[chosen] += utility
         self.EVs = self.EVs * (1 - self.a)
 
     def decay_win_update(self, chosen, reward, rt, trial):
@@ -435,6 +551,87 @@ class VisualSearchModels:
         self.EVs[chosen] += reward
         self.EVs = self.EVs * (1 - self.a)
 
+    # ------------------------------------------------------------------------------------------------------------------
+    # Now we define RT-related models specifically for the visual search task
+    # ------------------------------------------------------------------------------------------------------------------
+    def RT_exp_basic(self, chosen, reward, rt, trial):
+        if trial == 1:
+            self.RTs = self.RT_initial
+        self.RTs[chosen] = self.RT_initial[chosen] * np.exp(-1 * self.k * trial)
+        self.EVs = [-x for x in self.RTs]
+    
+    def RT_delta(self, chosen, reward, rt, trial):
+        if trial == 1:
+            self.RTs = self.RT_initial
+
+        self.RTs[chosen] += self.a * (rt - self.RTs[chosen])
+        self.EVs = [-x for x in self.RTs]
+
+    def RT_delta_PVL(self, chosen, reward, rt, trial):
+        if trial == 1:
+            self.RTs = self.RT_initial
+            self.RT_AV = np.mean(self.RTs)
+
+        RT_diff = rt - self.RT_AV
+        self.RT_AV += RT_diff / (trial + 1)
+        utility = (self.lamda * np.abs(rt) ** self.b) * (RT_diff >= 0) + (np.abs(rt) ** self.b) * (RT_diff < 0)
+        prediction_error = utility - self.RTs[chosen]
+        self.RTs[chosen] += self.a * prediction_error
+        self.EVs = [-x for x in self.RTs]
+
+    def RT_decay(self, chosen, reward, rt, trial):
+        if trial == 1:
+            self.RTs = self.RT_initial
+
+        self.RTs[chosen] += rt
+        self.RTs = [x * (1 - self.a) for x in self.RTs]
+        self.EVs = [-x for x in self.RTs]
+
+    def RT_decay_PVL(self, chosen, reward, rt, trial):
+        if trial == 1:
+            self.RTs = self.RT_initial
+            self.RT_AV = np.mean(self.RTs)
+
+        RT_diff = rt - self.RT_AV
+        self.RT_AV += RT_diff / (trial + 1)
+        utility = (self.lamda * np.abs(rt) ** self.b) * (RT_diff >= 0) + (np.abs(rt) ** self.b) * (RT_diff < 0)
+        self.RTs[chosen] += utility
+        self.RTs = [x * (1 - self.a) for x in self.RTs]
+        self.EVs = [-x for x in self.RTs]
+
+    def RT_exp_delta(self, chosen, reward, rt, trial):
+        if trial == 1:
+            self.RTs = self.RT_initial
+
+        pred = self.RT_initial[chosen] * np.exp(-1 * self.k * trial)
+        prediction_error = rt - pred
+        self.RTs[chosen] += self.a * prediction_error
+            # prediction_error = rt - self.RTs[chosen]
+            # self.RTs[chosen] = self.RT_initial[chosen] * np.exp(-1 * self.k * rt) + self.a * prediction_error
+        self.EVs = [-x for x in self.RTs]
+
+    def RT_exp_decay(self, chosen, reward, rt, trial):
+        if trial == 1:
+            self.RTs = self.RT_initial
+
+        self.RTs[chosen] = self.RT_initial[chosen] * np.exp(-1 * self.k * trial) + rt
+        self.RTs = [x * (1 - self.a) for x in self.RTs]
+        self.EVs = [-x for x in self.RTs]
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Now we define hybrid models
+    # ------------------------------------------------------------------------------------------------------------------
+    def hybrid_delta_delta(self, chosen, reward, rt, trial):
+        # Reward update
+        prediction_error = reward - self.EVs[chosen]
+        self.EVs[chosen] += self.a * prediction_error
+
+        # RT update
+        if trial == 1:
+            self.RTs = self.RT_initial
+
+        self.RTs[chosen] += self.a * (rt - self.RTs[chosen])
+
     def update(self, chosen, reward, rt, trial):
         """
         Update EVs based on the choice, received reward, and trial number.
@@ -557,6 +754,8 @@ class VisualSearchModels:
             prob_choice = self.softmax(np.array(self.EVs))[ch]
             nll += -np.log(max(epsilon, prob_choice))
             self.update(ch, r, rt, t)
+            # print(f'Trial: {t}, Chosen: {ch}, Reward: {r}, alpha:{self.a}, RT: {rt}, '
+                  f'Ex_RT: {self.RTs}, EV: {self.EVs}, Prob: {prob_choice}')
 
         return nll
 
@@ -566,6 +765,20 @@ class VisualSearchModels:
 
         for r, ch, t, rt in zip(reward, choice, trial, react_time):
             prob_choice = self.softmax(np.array(self.EVs))[ch] * self.w + (1 - self.w) * self.Probs[ch]
+            nll += -np.log(max(epsilon, prob_choice))
+            self.update(ch, r, rt, t)
+
+        return nll
+
+    def hybrid_nll(self, reward, choice, trial, react_time, epsilon):
+
+        nll = 0
+
+        for r, ch, t, rt in zip(reward, choice, trial, react_time):
+            prob_choice_reward = self.softmax(np.array(self.EVs))[ch]
+            RT_EVs = [-rt for rt in self.RTs]
+            prob_choice_RT = self.softmax(np.array(RT_EVs))[ch]
+            prob_choice = self.w * prob_choice_reward + (1 - self.w) * prob_choice_RT
             nll += -np.log(max(epsilon, prob_choice))
             self.update(ch, r, rt, t)
 
@@ -583,34 +796,22 @@ class VisualSearchModels:
         """
         self.reset()
 
-        self.s = params[0] if self.model_type == 'ACTR_Ori' else None
-        self.t = params[0]
-        self.a = params[1]
-        self.b = params[2] if (self.num_params == 3 or self.model_type in ('delta_asymmetric', 'delta_PVL')) else self.a
-        self.tau = params[2] if self.model_type in ('ACTR', 'ACTR_Ori') else None
-        if self.model_type == 'mean_var_utility':
-            self.lamda = params[2]
-        elif self.model_type == 'delta_PVL':
-            self.lamda = params[3]
-        else:
-            self.lamda = None
+        cfg = self._PARAM_MAP.get(self.model_type, {})
+        for attr, idx in cfg.items():
+            setattr(self, attr, params[idx])
 
-        if self.model_type == 'WSLS_delta':
-            self.p_ws, self.p_ls = params[0], params[2]
-        elif self.model_type == 'WSLS':
-            self.p_ws, self.p_ls = params[0], params[1]
-        elif self.model_type in ('WSLS_decay_weight', 'WSLS_delta_weight'):
-            self.p_ws, self.p_ls = params[2], params[3]
-            self.w = params[4]
+        # 4) RT_initial is always the pair of suboptimal/optimal if present
+        if self.RT_initial_suboptimal is not None:
+            self.RT_initial = [
+                self.RT_initial_suboptimal,
+                self.RT_initial_optimal
+            ]
         else:
-            self.p_ws, self.p_ls = None, None
+            self.RT_initial = None
 
         epsilon = 1e-12
 
         trial_onetask = np.arange(1, len(reward) + 1)
-
-        # # in this within-subject task, we need to combine two sets of trials
-        # trial = np.concatenate((trial_onetask, trial_onetask))
 
         return self.nll_function(reward, choice, trial_onetask, react_time, epsilon)
 
@@ -901,381 +1102,5 @@ class VisualSearchModels:
 
 
 # ======================================================================================================================
-# End of the ComputationalModels class
+# End of the VisualSearchModels class (Other assistant classes can be found in ComputationalModeling.py)
 # ======================================================================================================================
-
-# ======================================================================================================================
-# Model Comparison Functions
-# ======================================================================================================================
-def likelihood_ratio_test(null_results, alternative_results, df):
-    """
-    Perform a likelihood ratio test.
-
-    Parameters:
-    - null_nll: Negative log-likelihood of the simpler (null) model.
-    - alternative_nll: Negative log-likelihood of the more complex (alternative) model.
-    - df: Difference in the number of parameters between the two models.
-
-    Returns:
-    - p_value: p-value of the test.
-    """
-    # locate the nll values for the null and alternative models
-    null_nll = null_results['best_nll']
-
-    alternative_nll = alternative_results['best_nll']
-
-    # Compute the likelihood ratio statistic
-    lr_stat = 2 * np.mean((null_nll - alternative_nll))
-
-    # Get the p-value
-    p_value = chi2.sf(lr_stat, df)
-
-    return p_value
-
-
-def bayes_factor(null_results, alternative_results):
-    """
-    Compute the Bayes factor.
-
-    Parameters:
-    - null_BIC: BIC of the simpler (null) model.
-    - alternative_BIC: BIC of the more complex (alternative) model.
-
-    Returns:
-    - bayes_factor: Bayes factor of the test.
-    """
-    # locate the nll values for the null and alternative models
-    null_BIC = null_results['BIC']
-    alternative_BIC = alternative_results['BIC']
-
-    # Compute the Bayes factor
-    BIC_diff_array = 0.5 * (null_BIC - alternative_BIC)
-    # log_BIC_array = np.exp(BIC_diff_array)
-    # BF = np.prod(log_BIC_array)
-    mean_bic_diff = np.mean(BIC_diff_array)
-    BF = np.exp(mean_bic_diff)
-
-    return BF
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# Implement Bayesian Model Selection (BMS)
-# ----------------------------------------------------------------------------------------------------------------------
-def vb_model_selection(log_evidences, alpha0=None, tol=1e-6, max_iter=1000):
-    """
-    Variational Bayesian Model Selection for multiple models and multiple subjects.
-
-    Implements the iterative VB algorithm described by:
-    - Equations 3, 7, 9, 11, 12, 13, and the final pseudo-code in Equation 14.
-
-    Parameters
-    ----------
-    log_evidences : np.ndarray, shape (N, K)
-        Matrix of log model evidences for N subjects and K models.
-        log_evidences[n, k] = ln p(y_n | m_{nk})
-    alpha0 : np.ndarray, shape (K,)
-        Initial Dirichlet prior parameters. If None, set to 1 for all models.
-    tol : float
-        Tolerance for convergence based on changes in alpha.
-    max_iter : int
-        Maximum number of VB iterations.
-
-    Returns
-    -------
-    alpha : np.ndarray, shape (K,)
-        Final Dirichlet parameters of the approximate posterior q(r).
-    g : np.ndarray, shape (N, K)
-        Posterior model assignment probabilities per subject.
-    """
-
-    N, K = log_evidences.shape
-    if alpha0 is None:
-        alpha0 = np.ones(K)
-
-    # Initialize alpha
-    alpha = alpha0.copy()
-
-    for iteration in range(max_iter):
-        alpha_sum = np.sum(alpha)
-
-        # Compute unnormalized posterior assignments u_nk
-        # u_nk = exp(ln p(y_n | m_nk) + Psi(alpha_k) - Psi(alpha_sum))
-        u = np.exp(log_evidences + psi(alpha) - psi(alpha_sum))  # shape (N,K)
-
-        # Normalize to get g_nk
-        u_sum = np.sum(u, axis=1, keepdims=True)
-        g = u / u_sum  # shape (N,K)
-
-        # Update beta_k = sum_n g_nk
-        beta = np.sum(g, axis=0)  # shape (K,)
-
-        # Update alpha
-        alpha_new = alpha0 + beta
-
-        # Check convergence
-        diff = np.linalg.norm(alpha_new - alpha)
-        alpha = alpha_new
-        if diff < tol:
-            break
-
-    return alpha, g
-
-
-def compute_exceedance_prob(alpha, n_samples=100000):
-    """
-    Compute exceedance probabilities for each model by Monte Carlo approximation.
-
-    Parameters
-    ----------
-    alpha : array-like of shape (K,)
-        The Dirichlet parameters for the posterior q(r).
-    n_samples : int
-        Number of samples to draw from Dirichlet.
-    random_state : int or None
-        Random seed for reproducibility.
-
-    Returns
-    -------
-    exceedance_probs : np.ndarray of shape (K,)
-        The exceedance probability for each model.
-    """
-    samples = dirichlet.rvs(alpha, size=n_samples)
-    winners = np.argmax(samples, axis=1)  # indices of best model per draw
-
-    K = len(alpha)
-    exceedance_probs = np.bincount(winners, minlength=K) / n_samples
-    return exceedance_probs
-
-
-# ======================================================================================================================
-# End of the Model Comparison Functions; now we define the prepatory functions
-# ======================================================================================================================
-def dict_generator_VS(df, task='VS'):
-    """
-    Generate a dictionary grouping data in the given DataFrame by a subject identifier and
-    mapping specific keys to column values based on the provided task.
-
-    This function processes the input DataFrame by grouping it based on an identified
-    subject column and mapping specific task-related keys to the corresponding column
-    values in the DataFrame.
-
-    :param df: Input dataframe containing the experimental data.
-    :type df: pandas.DataFrame
-    :param task: Task identifier used to map keys to respective column name candidates
-        defined in the function. Defaults to 'VS'.
-    :type task: str
-    :return: A dictionary where keys represent distinct subject identifiers, and values
-        are dictionaries containing task-related keys mapped to lists derived from
-        identified column values in the grouped data.
-    :rtype: dict
-
-    :raises ValueError: If the provided task does not match any of the keys in the
-        predefined COLUMN_MAP.
-    :raises KeyError: If none of the candidate columns defined for the task-related
-        keys are found in the DataFrame's columns.
-    """
-
-    def find_col(candidates):
-        for col in candidates:
-            if col in df.columns:
-                return col
-        raise KeyError(f"None of {candidates!r} found in DataFrame columns")
-
-    # define for each task which output‐keys map to which column‐name candidates
-    COLUMN_MAP = {
-        'VS': {
-            'reward': ['OutcomeValue'],
-            'choice': ['Optimal_Choice'],
-            'react_time': ['RT']
-        }
-    }
-
-    if task not in COLUMN_MAP:
-        raise ValueError(f"Unsupported task {task!r}")
-
-    # optional: allow different grouping columns too
-    group_col = find_col(['SubNo', 'subjID', 'Subnum', 'subnum', 'SubjectID', 'ID', 'subject'])
-
-    d = {}
-    for subject_id, group in df.groupby(group_col):
-        entry = {}
-        for key, candidates in COLUMN_MAP[task].items():
-            actual_col = find_col(candidates)
-            entry[key] = group[actual_col].tolist()
-        d[subject_id] = entry
-
-    return d
-
-
-def extract_all_parameters(param_str):
-    """
-    Extracts all numerical values from a parameter string and returns them as a list of floats.
-
-    Parameters:
-    param_str (str): A string containing numerical values.
-
-    Returns:
-    list: A list of floats extracted from the string.
-    """
-    if isinstance(param_str, str):
-        return [float(x) for x in param_str.strip('[]').split()]
-    return []
-
-
-def parameter_extractor(df, param_name=['t', 'alpha', "subj_weight"]):
-    """
-    Extracts all parameter values from a dataframe and returns them as a list of lists.
-
-    Parameters:
-    df (pd.DataFrame): A dataframe containing parameter values.
-
-    Returns:
-    list: A list of lists containing parameter values.
-    """
-    all_params = df['best_parameters'].apply(extract_all_parameters).tolist()
-    all_params_transposed = list(map(list, zip(*all_params)))
-    params_dict = {param: all_params_transposed[i] for i, param in enumerate(param_name)}
-
-    # attach back to the dataframe
-    for i, param in enumerate(param_name):
-        df[param] = params_dict[param]
-
-    # remove the best_parameters column
-    df.drop(columns=['best_parameters'], inplace=True)
-
-    return df
-
-
-def safely_evaluate(x):
-    if isinstance(x, list):
-        return x
-    try:
-        # Try to safely evaluate the string to a list using ast.literal_eval
-        return ast.literal_eval(x)
-    except (ValueError, SyntaxError):
-        # If it's not evaluable (e.g., a number), just return as is
-        return [x]  # Wrap in a list for consistency
-
-
-def clean_list_string(s):
-    if isinstance(s, str):
-        # Remove unwanted characters and ensure proper formatting
-        s = s.strip("[],")  # Remove leading/trailing brackets and commas
-        s = s.replace(" ", ",")  # Replace spaces with commas
-        s = s.replace(",,", ",")  # Replace consecutive commas with a single comma
-        s = s.strip(",")  # Remove leading/trailing commas again after cleanup
-        # Ensure the string is wrapped in brackets
-        s = f"[{s}]"
-    return s
-
-
-def trial_exploder(data, col):
-    return data.apply(lambda x: safely_evaluate(x[col]), axis=1).explode().reset_index(drop=True)
-
-
-# ======================================================================================================================
-# Model Recovery & Parameter Recovery Functions
-# ======================================================================================================================
-def model_recovery(model_names, models, reward_means, reward_var, AB_freq=100, CD_freq=50, n_iterations=100,
-                   n_fitting_iterations=100, metric='BIC'):
-    n_models = len(models)
-    all_best_fitting_model = pd.DataFrame()
-    all_sim = pd.DataFrame()
-    all_fit = pd.DataFrame()
-
-    for i in range(n_iterations):
-
-        print(f"Running the {i + 1}th iteration")
-        print("=============================================")
-
-        start_time = time.time()
-
-        i_sim = pd.DataFrame()
-        i_fit = pd.DataFrame()
-
-        # simulate the data
-        for j in range(n_models):
-            sim = models[j].simulate(reward_means, reward_var, AB_freq=AB_freq, CD_freq=CD_freq, num_iterations=1)
-            sim['simulated_model'] = model_names[j]
-
-            i_sim = pd.concat([i_sim, sim]).reset_index(drop=True)
-
-        i_sim.iloc[:, 0] = (i_sim.index // 250) + 1
-        i_sim['pair'] = i_sim['pair'].map(mapping['SetSeen'])
-        i_sim['choice'] = i_sim['choice'].map(mapping['KeyResponse'])
-        i_sim.rename(columns={'simulation_num': 'Subnum', 'pair': 'SetSeen.',
-                              'choice': 'KeyResponse', 'reward': 'Reward'}, inplace=True)
-        sim_dict = dict_generator(i_sim)
-        all_sim = pd.concat([all_sim, i_sim]).reset_index(drop=True)
-
-        # fit the data
-        for k in range(n_models):
-            fit = models[k].fit(sim_dict, num_iterations=n_fitting_iterations)
-            fit['fit_model'] = model_names[k]
-            fit['simulated_model'] = model_names
-            i_fit = pd.concat([i_fit, fit]).reset_index(drop=True)
-
-        all_fit = pd.concat([all_fit, i_fit]).reset_index(drop=True)
-
-        # find the best fitting model
-        best_fitting_model = (i_fit.loc[i_fit.groupby('participant_id')[metric].idxmin()].reset_index(drop=True))
-
-        # append the best fitting model to the all_best_fitting_model
-        all_best_fitting_model = pd.concat([all_best_fitting_model, best_fitting_model]).reset_index(drop=True)
-
-        print(f"Time taken for iteration {i + 1}: {(time.time() - start_time) / 60} minutes")
-
-    # reset the participant id
-    all_best_fitting_model['participant_id'] = all_best_fitting_model.index + 1
-
-    return all_sim, all_fit, all_best_fitting_model
-
-
-# ======================================================================================================================
-# Moving window approach
-# ======================================================================================================================
-def create_sliding_windows(data, window_size, id_col):
-    """Create sliding windows of a specified size from the data per participant."""
-    max_window_steps = max(len(group) - window_size + 1 for _, group in data.groupby(id_col))
-
-    for step in range(max_window_steps):
-        window_data = []
-        for participant_id, participant_data in data.groupby(id_col):
-            if step < len(participant_data) - window_size + 1:
-                window = participant_data.iloc[step:step + window_size].copy()
-                window_data.append(window)
-        yield pd.concat(window_data, ignore_index=True)
-
-
-def moving_window_model_fitting(data, model, task='ABCD', num_iterations=100, window_size=10,
-                                id_col='Subnum', **kwargs):
-    """
-    Fit the model to the data using a moving window approach.
-
-    Parameters:
-        data: DataFrame containing the behavioral data
-        model: ComputationalModel instance
-        task: String identifying the task type ('ABCD' or 'IGT_SGT')
-        num_iterations: Number of iterations for model fitting
-        window_size: Size of the sliding window
-        id_col: Column name for participant ID
-        **kwargs: Additional keyword arguments to pass to model.fit()
-    """
-    window_results = []
-
-    for i, window_data in enumerate(create_sliding_windows(data, window_size, id_col)):
-        max_window_steps = max(len(group) - window_size + 1 for _, group in data.groupby(id_col))
-        print(f'Fitting window {i + 1}/{max_window_steps}')
-
-        window_dict = dict_generator(window_data, task)
-        window_fit = model.fit(window_dict, num_iterations=num_iterations, **kwargs)
-
-        for result in window_fit.to_dict('records'):
-            result.update({
-                'window_id': i + 1,
-                'window_start': i + 1,
-                'window_end': i + window_size
-            })
-            window_results.append(result)
-
-    return pd.DataFrame(window_results)

@@ -18,7 +18,7 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
     print(f"Fitting participant {participant_id}...")
     start_time = time.time()
 
-    total_n = model.num_trials
+    total_n = len(pdata['reward'])
 
     if model_type in ('Dir', 'Gau', 'Recency', 'Param_Dynamic', 'Param_Dynamic', 'Param_Dynamic_Recency',
                       'Entropy_Recency', 'Entropy_Dis', 'Dual_Dis'):
@@ -477,7 +477,7 @@ class DualProcessModel:
         # if trial == 200:
         #     self.restart_exp()
 
-        if trial > 150:
+        if trial > 999:
             return self.EV_Dir, self.EV_Gau
 
         else:
