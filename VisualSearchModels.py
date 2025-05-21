@@ -104,6 +104,11 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
                              np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 23.9999),
                              np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 23.9999), (0.0001, 23.9999), (0.0001, 0.9999))
+        elif model_type in ('hybrid_delta_delta_3'):
+            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 23.9999),
+                             np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 0.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 23.9999), (0.0001, 23.9999), (0.0001, 0.9999))
 
         result = minimize(model.negative_log_likelihood, initial_guess,
                           args=(pdata['reward'], pdata['choice'], pdata['react_time']),
@@ -188,6 +193,7 @@ class VisualSearchModels:
             'RT_delta_PVL': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'b': 4, 'lamda': 5},
             'RT_decay_PVL': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'b': 4, 'lamda': 5},
             'hybrid_delta_delta': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'w': 4},
+            'hybrid_delta_delta_3': {'t': 0, 'a': 1, 'b': 2, 'RT_initial_suboptimal': 3, 'RT_initial_optimal': 4, 'w': 5},
         }
 
         # any attributes you always want to have, even if None
@@ -197,7 +203,12 @@ class VisualSearchModels:
             'p_ws', 'p_ls', 'w',
         ]
 
-        # initialize all of your attrs to None
+        # initialize default b overrides
+        self._B_OVERRIDES = {
+            'hybrid_delta_delta': 'a'
+        }
+
+        # initialize all attributes to None
         for attr in self._DEFAULT_ATTRS:
             setattr(self, attr, None)
 
@@ -221,7 +232,7 @@ class VisualSearchModels:
                 5
             ),
             **dict.fromkeys(
-                ('RT_delta_PVL', 'RT_decay_PVL'),
+                ('RT_delta_PVL', 'RT_decay_PVL', 'hybrid_delta_delta_3'),
                 6
             ),
             **dict.fromkeys(
@@ -276,6 +287,7 @@ class VisualSearchModels:
             'RT_delta_PVL': self.RT_delta_PVL,
             'RT_decay_PVL': self.RT_decay_PVL,
             'hybrid_delta_delta': self.hybrid_delta_delta,
+            'hybrid_delta_delta_3': self.hybrid_delta_delta,
         }
 
         self.updating_function = self.updating_mapping[self.model_type]
@@ -308,6 +320,7 @@ class VisualSearchModels:
             'RT_delta_PVL': self.standard_nll,
             'RT_decay_PVL': self.standard_nll,
             'hybrid_delta_delta': self.hybrid_nll,
+            'hybrid_delta_delta_3': self.hybrid_nll,
         }
 
         self.nll_function = self.nll_mapping_VS[self.model_type]
@@ -630,7 +643,7 @@ class VisualSearchModels:
         if trial == 1:
             self.RTs = self.RT_initial
 
-        self.RTs[chosen] += self.a * (rt - self.RTs[chosen])
+        self.RTs[chosen] += self.b * (rt - self.RTs[chosen])
 
     def update(self, chosen, reward, rt, trial):
         """
@@ -754,8 +767,7 @@ class VisualSearchModels:
             prob_choice = self.softmax(np.array(self.EVs))[ch]
             nll += -np.log(max(epsilon, prob_choice))
             self.update(ch, r, rt, t)
-            # print(f'Trial: {t}, Chosen: {ch}, Reward: {r}, alpha:{self.a}, RT: {rt}, '
-                  f'Ex_RT: {self.RTs}, EV: {self.EVs}, Prob: {prob_choice}')
+            # print(f'Trial: {t}, Chosen: {ch}, Reward: {r}, alpha:{self.a}, RT: {rt}, Ex_RT: {self.RTs}, EV: {self.EVs}, Prob: {prob_choice}')
 
         return nll
 
@@ -800,7 +812,7 @@ class VisualSearchModels:
         for attr, idx in cfg.items():
             setattr(self, attr, params[idx])
 
-        # 4) RT_initial is always the pair of suboptimal/optimal if present
+        # set the initial RTs
         if self.RT_initial_suboptimal is not None:
             self.RT_initial = [
                 self.RT_initial_suboptimal,
@@ -808,6 +820,8 @@ class VisualSearchModels:
             ]
         else:
             self.RT_initial = None
+
+        self.b = getattr(self, self._B_OVERRIDES.get(self.model_type, 'b'))
 
         epsilon = 1e-12
 
