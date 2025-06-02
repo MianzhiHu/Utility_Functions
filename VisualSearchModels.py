@@ -33,7 +33,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
         print('Participant {} - Iteration [{}/{}]'.format(participant_id, model.iteration,
                                                           num_iterations))
 
-        if model_type in ('decay', 'delta', 'decay_choice', 'decay_win'):
+        if model_type in ('decay', 'delta', 'decay_choice', 'decay_win', 'delta_RPUT'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999))
         elif model_type in ('delta_PVL', 'delta_PVL_relative', 'decay_PVL_relative'):
@@ -167,6 +167,7 @@ class VisualSearchModels:
         self._PARAM_MAP = {
             'delta': {'t': 0, 'a': 1},
             'delta_asymmetric': {'t': 0, 'a': 1, 'b': 2},
+            'delta_RPUT': {'t': 0, 'a': 1},
             'delta_PVL': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
             'delta_PVL_relative': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
             'decay': {'t': 0, 'a': 1},
@@ -185,7 +186,7 @@ class VisualSearchModels:
             'WSLS_delta': {'a': 1, 'p_ws': 0, 'p_ls': 2},
             'WSLS_decay_weight': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'w': 4},
             'WSLS_delta_weight': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'w': 4},
-            'RT_exp_basic': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'k': 1},
+            'RT_exp_basic': {'t': 0, 'k': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3},
             'RT_delta': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3},
             'RT_decay': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3},
             'RT_exp_delta': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'k': 4},
@@ -214,7 +215,7 @@ class VisualSearchModels:
 
         self._PARAM_COUNT = {
             **dict.fromkeys(
-                ('decay', 'delta', 'decay_choice', 'decay_win', 'WSLS'),
+                ('decay', 'delta', 'delta_RPUT', 'decay_choice', 'decay_win', 'WSLS'),
                 2
             ),
             **dict.fromkeys(
@@ -263,6 +264,7 @@ class VisualSearchModels:
         self.updating_mapping = {
             'delta': self.delta_update,
             'delta_asymmetric': self.delta_asymmetric_update,
+            'delta_RPUT': self.delta_reward_per_RT_update,
             'delta_PVL': self.delta_PVL_update,
             'delta_PVL_relative': self.delta_PVL_relative_update,
             'decay': self.decay_update,
@@ -296,6 +298,7 @@ class VisualSearchModels:
         self.nll_mapping_VS = {
             'delta': self.standard_nll,
             'delta_asymmetric': self.standard_nll,
+            'delta_RPUT': self.standard_nll,
             'delta_PVL': self.standard_nll,
             'delta_PVL_relative': self.standard_nll,
             'decay': self.standard_nll,
@@ -389,6 +392,11 @@ class VisualSearchModels:
         prediction_error = reward - self.EVs[chosen]
         self.EVs[chosen] += (prediction_error > 0) * self.a * prediction_error + (prediction_error < 0) * self.b * \
                             prediction_error
+
+    def delta_reward_per_RT_update(self, chosen, reward, rt, trial):
+        reward_per_RT = reward / np.clip(rt, 0.0001, None)  # Avoid division by zero
+        prediction_error = reward_per_RT - self.EVs[chosen]
+        self.EVs[chosen] += self.a * prediction_error
 
     def delta_PVL_update(self, chosen, reward, rt, trial):
         utility = (np.abs(reward) ** self.b) * (reward >= 0) + (-self.lamda * (np.abs(reward) ** self.b)) * (reward < 0)
