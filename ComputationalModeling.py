@@ -1381,7 +1381,7 @@ def model_recovery(model_names, models, reward_means, reward_var, AB_freq=100, C
 # ======================================================================================================================
 # Moving window approach
 # ======================================================================================================================
-def create_sliding_windows(data, window_size, id_col):
+def create_sliding_windows(data, window_size, id_col, filter_fn=None):
     """Create sliding windows of specified size from the data per participant."""
     max_window_steps = max(len(group) - window_size + 1 for _, group in data.groupby(id_col))
 
@@ -1390,12 +1390,18 @@ def create_sliding_windows(data, window_size, id_col):
         for participant_id, participant_data in data.groupby(id_col):
             if step < len(participant_data) - window_size + 1:
                 window = participant_data.iloc[step:step + window_size].copy()
-                window_data.append(window)
+                # Apply filter_fn, if provided:
+                if filter_fn is not None:
+                    window = filter_fn(window)
+                if not window.empty:
+                    window_data.append(window)
+                else:
+                    print(f"Warning: Empty window for participant {participant_id} at window step {step + 1}")
         yield pd.concat(window_data, ignore_index=True)
 
 
 def moving_window_model_fitting(data, model, task='ABCD', num_iterations=100, window_size=10,
-                                id_col='Subnum', **kwargs):
+                                id_col='Subnum', filter_fn=None, **kwargs):
     """
     Fit the model to the data using a moving window approach.
     
@@ -1410,9 +1416,19 @@ def moving_window_model_fitting(data, model, task='ABCD', num_iterations=100, wi
     """
     window_results = []
 
-    for i, window_data in enumerate(create_sliding_windows(data, window_size, id_col)):
+    for i, window_data in enumerate(create_sliding_windows(data, window_size, id_col, filter_fn)):
         max_window_steps = max(len(group) - window_size + 1 for _, group in data.groupby(id_col))
+
+        # detect how many participants have how many trials in the current window
+        rows_per_sub = window_data.groupby(id_col).size()
+        freq_dist = rows_per_sub.value_counts().sort_index()
+        df_freq_dist = freq_dist.reset_index(name='n_participants')
+        df_freq_dist.columns = ['n_trials', 'n_participants']
         print(f'Fitting window {i + 1}/{max_window_steps}')
+        print()
+        print('Frequency distribution:')
+        print(df_freq_dist.to_string(index=False))
+        print(f'=' * 50)
 
         window_dict = dict_generator(window_data, task)
         window_fit = model.fit(window_dict, num_iterations=num_iterations, **kwargs)

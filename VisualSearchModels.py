@@ -33,7 +33,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
         print('Participant {} - Iteration [{}/{}]'.format(participant_id, model.iteration,
                                                           num_iterations))
 
-        if model_type in ('decay', 'delta', 'decay_choice', 'decay_win', 'delta_RPUT'):
+        if model_type in ('decay', 'delta', 'decay_choice', 'decay_win', 'delta_RPUT', 'decay_RPUT'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999))
         elif model_type in ('delta_PVL', 'delta_PVL_relative', 'decay_PVL_relative'):
@@ -99,12 +99,12 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
                              np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 23.9999), (0.0001, 23.9999), (0.0001, 0.9999),
                       (0.0001, 4.9999))
-        elif model_type in ('hybrid_delta_delta'):
+        elif model_type in ('hybrid_delta_delta', 'hybrid_decay_delta'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 23.9999),
                              np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 23.9999), (0.0001, 23.9999), (0.0001, 0.9999))
-        elif model_type in ('hybrid_delta_delta_3'):
+        elif model_type in ('hybrid_delta_delta_3', 'hybrid_decay_delta_3'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 23.9999),
                              np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 0.9999)]
@@ -175,6 +175,7 @@ class VisualSearchModels:
             'decay_PVL_relative': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
             'decay_choice': {'t': 0, 'a': 1},
             'decay_win': {'t': 0, 'a': 1},
+            'decay_RPUT': {'t': 0, 'a': 1},
             'delta_decay': {'t': 0, 'a': 1, 'b': 2},
             'mean_var_utility': {'t': 0, 'a': 1, 'lamda': 2},
             'sampler_decay': {'t': 0, 'a': 1},
@@ -195,6 +196,8 @@ class VisualSearchModels:
             'RT_decay_PVL': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'b': 4, 'lamda': 5},
             'hybrid_delta_delta': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'w': 4},
             'hybrid_delta_delta_3': {'t': 0, 'a': 1, 'b': 2, 'RT_initial_suboptimal': 3, 'RT_initial_optimal': 4, 'w': 5},
+            'hybrid_decay_delta': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'w': 4},
+            'hybrid_decay_delta_3': {'t': 0, 'a': 1, 'b': 2, 'RT_initial_suboptimal': 3, 'RT_initial_optimal': 4, 'w': 5},
         }
 
         # any attributes you always want to have, even if None
@@ -206,7 +209,8 @@ class VisualSearchModels:
 
         # initialize default b overrides
         self._B_OVERRIDES = {
-            'hybrid_delta_delta': 'a'
+            'hybrid_delta_delta': 'a',
+            'hybrid_decay_delta': 'a'
         }
 
         # initialize all attributes to None
@@ -215,7 +219,7 @@ class VisualSearchModels:
 
         self._PARAM_COUNT = {
             **dict.fromkeys(
-                ('decay', 'delta', 'delta_RPUT', 'decay_choice', 'decay_win', 'WSLS'),
+                ('decay', 'delta', 'delta_RPUT', 'decay_RPUT', 'decay_choice', 'decay_win', 'WSLS'),
                 2
             ),
             **dict.fromkeys(
@@ -223,17 +227,17 @@ class VisualSearchModels:
                 3
             ),
             **dict.fromkeys(
-                ('delta_PVL', 'delta_PVL_relative', 'decay_PVL_relative',
-                 'RT_exp_basic', 'RT_delta', 'RT_decay'),
+                ('delta_PVL', 'delta_PVL_relative', 'decay_PVL_relative', 'RT_exp_basic', 'RT_delta',
+                 'RT_decay'),
                 4
             ),
             **dict.fromkeys(
-                ('WSLS_delta_weight', 'WSLS_decay_weight',
-                 'RT_exp_delta', 'RT_exp_decay', 'hybrid_delta_delta'),
+                ('WSLS_delta_weight', 'WSLS_decay_weight', 'RT_exp_delta', 'RT_exp_decay',
+                 'hybrid_delta_delta', 'hybrid_decay_delta'),
                 5
             ),
             **dict.fromkeys(
-                ('RT_delta_PVL', 'RT_decay_PVL', 'hybrid_delta_delta_3'),
+                ('RT_delta_PVL', 'RT_decay_PVL', 'hybrid_delta_delta_3', 'hybrid_decay_delta_3'),
                 6
             ),
             **dict.fromkeys(
@@ -272,6 +276,7 @@ class VisualSearchModels:
             'decay_PVL_relative': self.decay_PVL_relative_update,
             'decay_choice': self.decay_choice_update,
             'decay_win': self.decay_win_update,
+            'decay_RPUT': self.decay_reward_per_RT_update,
             'delta_decay': self.delta_update,
             'mean_var_utility': self.mean_var_utility,
             'sampler_decay': self.sampler_decay_update,
@@ -290,6 +295,8 @@ class VisualSearchModels:
             'RT_decay_PVL': self.RT_decay_PVL,
             'hybrid_delta_delta': self.hybrid_delta_delta,
             'hybrid_delta_delta_3': self.hybrid_delta_delta,
+            'hybrid_decay_delta': self.hybrid_decay_delta,
+            'hybrid_decay_delta_3': self.hybrid_decay_delta,
         }
 
         self.updating_function = self.updating_mapping[self.model_type]
@@ -306,6 +313,7 @@ class VisualSearchModels:
             'decay_PVL_relative': self.standard_nll,
             'decay_choice': self.standard_nll,
             'decay_win': self.standard_nll,
+            'decay_RPUT': self.standard_nll,
             'delta_decay': self.standard_nll,
             'mean_var_utility': self.standard_nll,
             'sampler_decay': self.standard_nll,
@@ -324,6 +332,8 @@ class VisualSearchModels:
             'RT_decay_PVL': self.standard_nll,
             'hybrid_delta_delta': self.hybrid_nll,
             'hybrid_delta_delta_3': self.hybrid_nll,
+            'hybrid_decay_delta': self.hybrid_nll,
+            'hybrid_decay_delta_3': self.hybrid_nll,
         }
 
         self.nll_function = self.nll_mapping_VS[self.model_type]
@@ -428,6 +438,11 @@ class VisualSearchModels:
         self.AV += reward_diff / (trial + 1)
         utility = (np.abs(reward) ** self.b) * (reward_diff >= 0) + ((1 / self.lamda) * (np.abs(reward) ** self.b)) * (reward_diff < 0)
         self.EVs[chosen] += utility
+        self.EVs = self.EVs * (1 - self.a)
+
+    def decay_reward_per_RT_update(self, chosen, reward, rt, trial):
+        reward_per_RT = reward / np.clip(rt, 0.0001, None)  # Avoid division by zero
+        self.EVs[chosen] += self.a * reward_per_RT
         self.EVs = self.EVs * (1 - self.a)
 
     def decay_win_update(self, chosen, reward, rt, trial):
@@ -646,6 +661,17 @@ class VisualSearchModels:
         # Reward update
         prediction_error = reward - self.EVs[chosen]
         self.EVs[chosen] += self.a * prediction_error
+
+        # RT update
+        if trial == 1:
+            self.RTs = self.RT_initial
+
+        self.RTs[chosen] += self.b * (rt - self.RTs[chosen])
+
+    def hybrid_decay_delta(self, chosen, reward, rt, trial):
+        # Reward update
+        self.EVs[chosen] += reward
+        self.EVs = self.EVs * (1 - self.a)
 
         # RT update
         if trial == 1:
