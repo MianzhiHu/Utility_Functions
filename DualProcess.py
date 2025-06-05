@@ -53,7 +53,7 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
             bounds = [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999)]
-        elif model_type == 'DP_Uncertainty_Sensitivity':
+        elif model_type == 'Dual_Process_Sensitivity':
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999)]
@@ -190,7 +190,7 @@ class DualProcessModel:
 
         self._PARAM_COUNT = {
             **dict.fromkeys(
-                'Dual_Binary',
+                ['Dual_Binary'],
                  1
                  ),
             **dict.fromkeys(
@@ -203,11 +203,11 @@ class DualProcessModel:
                 3
             ),
             **dict.fromkeys(
-                'Dual_Process_t2',
+                ['Dual_Process_t2'],
                 4
             ),
             **dict.fromkeys(
-                'Dual_Process_Sensitivity',
+                ['Dual_Process_Sensitivity'],
                 5
             )
         }
@@ -248,7 +248,7 @@ class DualProcessModel:
         }
 
         self.IGT_SGT_model_mapping = {
-            'Dual_Process': self.dual_process_igt_sgt_nll,
+            'Dual_Process_t2': self.dual_process_igt_sgt_nll,
             'Dual_Process_Sensitivity': self.dual_process_sensitivity_igt_sgt_nll
         }
 
