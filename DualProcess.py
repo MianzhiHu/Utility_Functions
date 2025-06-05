@@ -20,18 +20,6 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
 
     total_n = len(pdata['reward'])
 
-    if model_type in ('Dir', 'Gau', 'Recency', 'Param_Dynamic', 'Param_Dynamic', 'Param_Dynamic_Recency',
-                      'Entropy_Recency', 'Entropy_Dis', 'Dual_Dis'):
-        k = 2
-    elif model_type in ('Param', 'Entropy_Dis_ID'):
-        k = 3
-    elif model_type == ('DP_Uncertainty_Sensitivity'):
-        k = 4
-    elif model_type == 'Multi_Param':
-        k = 7
-    else:
-        k = 1
-
     # get the number of parameters for the model
     k = model._PARAM_COUNT.get(model_type)
 
@@ -53,39 +41,28 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
         print('Participant {} - Iteration [{}/{}]'.format(participant_id, model.iteration,
                                                           num_iterations))
 
-        if model_type in ('Dir', 'Gau', 'Recency', 'Param_Dynamic', 'Param_Dynamic', 'Param_Dynamic_Recency',
-                          'Entropy_Recency', 'Entropy_Dis', 'Dual_Dis'):
+        if model_type in ('Dir', 'Gau', 'Dual_Binary_Recency', 'Dual_Binary_DisEntropy', 'Dual_Weight_ChoiceEntropy',
+                          'Dual_Weight_DisEntropy'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
             bounds = [(0.0001, 4.9999), (0.0001, 0.9999)]
-        elif model_type in ('Entropy_Dis_ID', 'Param'):
+        elif model_type in ('Dual_Process', 'Dual_Weight'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999)]
             bounds = [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999)]
+        elif model_type in ('Dual_Process_t2'):
+            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
+            bounds = [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999)]
         elif model_type == 'DP_Uncertainty_Sensitivity':
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999)]
             bounds = [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999),
                       (0.0001, 0.9999)]
-        elif model_type == 'Multi_Param':
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999)]
-            bounds = [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999),
-                      (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999)]
-        else:
-            initial_guess = [np.random.uniform(0.0001, 4.9999)]
-            bounds = [(0.0001, 4.9999)]
-
-        if model.num_t == 2:
-            k = k + 1
-            initial_guess.append(np.random.uniform(0.0001, 4.9999))
-            bounds.append((0.0001, 4.9999))
 
         if task == 'ABCD':
             result = minimize(model.negative_log_likelihood, initial_guess,
-                              args=(pdata['reward'], pdata['choiceset'], pdata['choice']),
+                              args=(pdata['reward'], pdata['choice'], pdata['choiceset']),
                               bounds=bounds, method='L-BFGS-B', options={'maxiter': 10000})
         elif task == 'IGT_SGT':
             result = minimize(model.negative_log_likelihood, initial_guess,
@@ -158,12 +135,11 @@ class DualProcessModel:
         self.num_training_trials = None
         self.task = task
         self.default_EV = float(default_EV)
-        self.num_t = None
         self.a_min = None
         self.iteration = None
         self.EVs = np.full(self.num_options, self.default_EV)
         self.default_EVs = np.full(self.num_options, self.default_EV)
-        self.EV_Dir = np.full(self.num_options, self.default_EV)
+        self.EV_Dir = np.full(self.num_options, 0.25)
         self.EV_Gau = np.full(self.num_options, self.default_EV)
         self.AV = np.full(self.num_options, self.default_EV)
         self.var = np.full(self.num_options, 1 / 12)
@@ -177,12 +153,6 @@ class DualProcessModel:
         self.weight_history = []
         self.obj_weight_history = []
 
-        self.t = None
-        self.t2 = None
-        self.a = None
-        self.tau_gau = None
-        self.tau_dir = None
-        self.weight = None
         self.model = None
         self.sim_type = None
         self.arbitration_function = None
@@ -190,7 +160,7 @@ class DualProcessModel:
         self.Dir_update_fun = None
         self.action_selection_Gau = None
         self.action_selection_Dir = None
-        self.param_start = 0
+        self._t2_OVERRIDES = None
 
         self.prior_mean = self.default_EV
         self.prior_var = 1 / 12
@@ -200,34 +170,47 @@ class DualProcessModel:
         self._PARAM_MAP = {
             'Dir': {'t': 0, 'a': 1},
             'Gau': {'t': 0, 'a': 1},
-            'Dual': {'t': 0, 'a': 1},
-            'Recency': {'t': 0, 'a': 1},
+            'Dual_Binary': {'t': 0},
+            'Dual_Binary_Recency': {'t': 0, 'a': 1},
+            'Dual_Binary_DisEntropy': {'t': 0, 'a': 1},
+            'Dual_Weight': {'t': 0, 'a': 1, 'weight': 2},
+            'Dual_Weight_ChoiceEntropy': {'t': 0, 'a': 1},
+            'Dual_Weight_DisEntropy': {'t': 0, 'a': 1},
+            'Dual_Process': {'t': 0, 'a': 1, 'weight': 2},
+            'Dual_Process_t2': {'t': 0, 'a': 1, 'weight': 2, 't2': 3},
+            'Dual_Process_Sensitivity': {'t': 0, 'a': 1, 'weight': 2, 'tau_gau': 3, 'tau_dir': 4}
         }
+
+        # any attributes you always want to have, even if None
+        self._DEFAULT_ATTRS = ['t', 't2', 'a', 'tau_gau', 'tau_dir', 'weight']
+
+        # initialize all attributes to None
+        for attr in self._DEFAULT_ATTRS:
+            setattr(self, attr, None)
 
         self._PARAM_COUNT = {
             **dict.fromkeys(
-                ('Dir', 'Gau', 'Recency', 'Param_Dynamic', 'Param_Dynamic', 'Param_Dynamic_Recency',
-                 'Entropy_Recency', 'Entropy_Dis', 'Dual_Dis'),
+                'Dual_Binary',
+                 1
+                 ),
+            **dict.fromkeys(
+                ('Dir', 'Gau', 'Dual_Binary_Recency', 'Dual_Binary_DisEntropy', 'Dual_Weight_ChoiceEntropy',
+                 'Dual_Weight_DisEntropy'),
                 2
             ),
             **dict.fromkeys(
-                ('Param', 'Entropy_Dis_ID'),
+                ('Dual_Weight', 'Dual_Process'),
                 3
             ),
             **dict.fromkeys(
-                ('delta_PVL', 'delta_PVL_relative', 'decay_PVL_relative'),
+                'Dual_Process_t2',
                 4
             ),
             **dict.fromkeys(
-                ('WSLS_delta_weight', 'WSLS_decay_weight'),
+                'Dual_Process_Sensitivity',
                 5
-            ),
-            **dict.fromkeys(
-                ('sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV', 'delta_decay'),
-                None  # will use model.num_params instead
-            ),
+            )
         }
-
 
         # Define the mapping between model parameters and input features
         self.choiceset_mapping = [
@@ -254,20 +237,19 @@ class DualProcessModel:
         self.ABCD_model_mapping = {
             'Dir': self.dir_nll,
             'Gau': self.gau_nll,
-            'Dual': self.dual_nll,
-            'Recency': self.recency_nll,
-            'Dual_Dis': self.distribution_dual_nll,
-            'Entropy': self.entropy_nll,
-            'Entropy_Recency': self.entropy_recency_nll,
-            'Entropy_Dis': self.distribution_entropy_nll,
-            'Entropy_Dis_ID': self.distribution_entropy_id_nll,
-            'Param': self.param_nll,
-            'Multi_Param': self.multi_param_nll
+            'Dual_Binary': self.dual_binary_nll,
+            'Dual_Binary_Recency': self.dual_binary_recency_nll,
+            'Dual_Binary_DisEntropy': self.dual_binary_dis_entropy_nll,
+            'Dual_Weight': self.dual_weight_nll,
+            'Dual_Weight_ChoiceEntropy': self.dual_weight_choice_entropy_nll,
+            'Dual_Weight_DisEntropy': self.dual_weight_dis_entropy_nll,
+            'Dual_Process': self.dual_process_nll,
+            'Dual_Process_t2': self.dual_process_nll,
         }
 
         self.IGT_SGT_model_mapping = {
-            'Entropy_Dis_ID': self.distribution_entropy_id_igt_sgt_nll,
-            'DP_Uncertainty_Sensitivity': self.distribution_entropy_id_sensitivity_igt_sgt_nll
+            'Dual_Process': self.dual_process_igt_sgt_nll,
+            'Dual_Process_Sensitivity': self.dual_process_sensitivity_igt_sgt_nll
         }
 
         if self.task == 'ABCD':
@@ -278,46 +260,12 @@ class DualProcessModel:
         self.sim_function_mapping = {
             'Dir': self.single_process_sim,
             'Gau': self.single_process_sim,
-            'Dual': self.dual_process_sim,
-            'Recency': self.dual_process_sim,
-            'Dual_Dis': self.distribution_dual_sim,
-            'Entropy': self.entropy_sim,
-            'Entropy_Dis': self.distribution_entropy_sim,
-            'Entropy_Dis_ID': self.distribution_entropy_id_sim,
-            'Threshold_Dis': self.distribution_threshold_sim,
-            'Param': self.param_sim,
-        }
-
-        self.Gau_fun_mapping = {
-            'Dir': self.Gau_naive_update,
-            'Gau': self.Gau_bayesian_update_with_recency,
-            'Dual': self.Gau_bayesian_update,
-            'Recency': self.Gau_bayesian_update_with_recency,
-            'Dual_Dis': self.Gau_bayesian_update_with_recency,
-            'Entropy': self.Gau_bayesian_update,
-            'Entropy_Recency': self.Gau_bayesian_update_with_recency,
-            'Entropy_Dis': self.Gau_bayesian_update,
-            'Entropy_Dis_ID': self.Gau_bayesian_update_with_recency,
-            'DP_Uncertainty_Sensitivity': self.Gau_naive_update_with_recency,
-            'Threshold_Dis': self.Gau_bayesian_update,
-            'Param': self.Gau_bayesian_update_with_recency,
-            'Multi_Param': self.Gau_bayesian_update_with_recency
-        }
-
-        self.Dir_fun_mapping = {
-            'Dir': self.Dir_update,
-            'Gau': self.Dir_update,
-            'Dual': self.Dir_update,
-            'Recency': self.Dir_update_with_linear_recency,
-            'Dual_Dis': self.Dir_update_with_linear_recency,
-            'Entropy': self.Dir_update,
-            'Entropy_Recency': self.Dir_update_with_linear_recency,
-            'Entropy_Dis': self.Dir_update,
-            'Entropy_Dis_ID': self.Dir_update_with_linear_recency,
-            'DP_Uncertainty_Sensitivity': self.Dir_update_with_linear_recency,
-            'Threshold_Dis': self.Dir_update_with_linear_recency,
-            'Param': self.Dir_update_with_linear_recency,
-            'Multi_Param': self.Dir_update_with_linear_recency
+            'Dual_Binary': self.dual_binary_sim,
+            'Dual_Binary_DisEntropy': self.dual_binary_dis_entropy_sim,
+            'Dual_Weight': self.dual_weight_sim,
+            'Dual_Weight_ChoiceEntropy': self.dual_weight_choice_entropy_sim,
+            'Dual_Weight_DisEntropy': self.dual_weight_dis_entropy_sim,
+            'Dual_Process': self.dual_process_sim,
         }
 
         self.arbitration_mapping = {
@@ -349,7 +297,7 @@ class DualProcessModel:
         }
 
     def reset(self):
-        self.EV_Dir = np.full(self.num_options, self.default_EV)
+        self.EV_Dir = np.full(self.num_options, 0.25)
         self.EV_Gau = np.full(self.num_options, self.default_EV)
         self.AV = np.full(self.num_options, self.default_EV)
         self.var = np.full(self.num_options, 1 / 12)
@@ -361,18 +309,6 @@ class DualProcessModel:
         self.process_chosen = []
         self.weight_history = []
         self.obj_weight_history = []
-
-    def restart_exp(self):
-        self.EV_Dir = np.full(self.num_options, self.default_EV)
-        self.EV_Gau = np.full(self.num_options, self.default_EV)
-        self.AV = np.full(self.num_options, self.default_EV)
-        self.var = np.full(self.num_options, 1 / 12)
-        self.M2 = np.full(self.num_options, 0.0)
-        self.alpha = np.full(self.num_options, 1.0)
-        self.gamma_a = np.full(self.num_options, 0.5)
-        self.gamma_b = np.full(self.num_options, 0.0)
-        self.reward_history = [[] for _ in range(self.num_options)]
-        self.process_chosen = []
 
     def softmax(self, x, t):
         c = 3 ** t - 1
@@ -572,7 +508,7 @@ class DualProcessModel:
 
         self.update(chosen, reward, trial)
 
-    def param_sim(self, optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial, process=None):
+    def dual_weight_sim(self, optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial, process=None):
 
         EVs = EV_calculation(self.EV_Dir, self.EV_Gau, self.weight)
 
@@ -587,7 +523,7 @@ class DualProcessModel:
 
         self.update(chosen, reward, trial)
 
-    def dual_process_sim(self, optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial,
+    def dual_binary_sim(self, optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial,
                          process=None):
 
         prob_optimal_dir = self.action_selection_Dir(self.EV_Dir[optimal], self.EV_Dir[suboptimal],
@@ -617,7 +553,7 @@ class DualProcessModel:
 
         self.update(chosen, reward, trial)
 
-    def distribution_dual_sim(self, optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial,
+    def dual_binary_dis_entropy_sim(self, optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial,
                               process=None):
         trial_av = [self.AV[optimal], self.AV[suboptimal]]
         trial_var = [self.var[optimal], self.var[suboptimal]]
@@ -654,7 +590,7 @@ class DualProcessModel:
 
         self.update(chosen, reward, trial)
 
-    def entropy_sim(self, optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial, process=None):
+    def dual_weight_choice_entropy_sim(self, optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial, process=None):
         prob_optimal_dir = self.action_selection_Dir(self.EV_Dir[optimal], self.EV_Dir[suboptimal],
                                                      optimal, suboptimal, len(self.reward_history[optimal]),
                                                      len(self.reward_history[suboptimal]))
@@ -681,7 +617,7 @@ class DualProcessModel:
 
         self.update(chosen, reward, trial)
 
-    def distribution_entropy_sim(self, optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial,
+    def dual_weight_dis_entropy_sim(self, optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial,
                                  process=None):
 
         trial_av = [self.AV[optimal], self.AV[suboptimal]]
@@ -715,7 +651,7 @@ class DualProcessModel:
 
         self.update(chosen, reward, trial)
 
-    def distribution_entropy_id_sim(self, optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial,
+    def dual_process_sim(self, optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial,
                                     process=None):
 
         trial_av = [self.AV[optimal], self.AV[suboptimal]]
@@ -749,7 +685,7 @@ class DualProcessModel:
              "reward": reward, "weight": weight_dir, 'obj_weight': obj_weight})
         self.update(chosen, reward, trial)
 
-    def distribution_entropy_id_sim_igtsgt(self, optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial,
+    def dual_process_igtsgt_sim(self, optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial,
                                     process=None):
 
         gau_entropy = 2 ** (multivariate_normal.entropy(self.AV, np.diag(self.var)))
@@ -775,53 +711,6 @@ class DualProcessModel:
         trial_details.append(
             {"pair": (chr(65 + pair[0]), chr(65 + pair[1])), "choice": chr(65 + chosen),
              "reward": reward, "weight": weight_dir, 'obj_weight': obj_weight})
-        self.update(chosen, reward, trial)
-
-    def distribution_threshold_sim(self, optimal, suboptimal, reward_means, reward_sd, trial_details, pair, trial,
-                                   process=None):
-
-        trial_av = [self.AV[optimal], self.AV[suboptimal]]
-        trial_var = [self.var[optimal], self.var[suboptimal]]
-        trial_cov = np.diag(trial_var)
-
-        gau_entropy = 2 ** (multivariate_normal.entropy(trial_av, trial_cov))
-
-        trial_alpha = [self.alpha[optimal], self.alpha[suboptimal]]
-
-        dir_entropy = 2 ** (dirichlet.entropy(trial_alpha))
-
-        min_entropy = min(dir_entropy, gau_entropy)
-
-        prob_optimal_dir = self.action_selection_Dir(self.EV_Dir[optimal], self.EV_Dir[suboptimal],
-                                                     optimal, suboptimal, len(self.reward_history[optimal]),
-                                                     len(self.reward_history[suboptimal]))
-        prob_optimal_gau = self.action_selection_Gau(self.EV_Gau[optimal], self.EV_Gau[suboptimal],
-                                                     optimal, suboptimal, len(self.reward_history[optimal]),
-                                                     len(self.reward_history[suboptimal]))
-        if min_entropy < self.tau:
-            entropies = {
-                'Dir': (dir_entropy, prob_optimal_dir, 1 - prob_optimal_dir),
-                'Gau': (gau_entropy, prob_optimal_gau, 1 - prob_optimal_gau)
-            }
-
-            chosen_process = min(entropies, key=lambda k: entropies[k][0])
-            prob_choice, prob_choice_alt = entropies[chosen_process][1], entropies[chosen_process][2]
-            weight_dir = 0 if chosen_process == 'Gau' else 1
-        else:
-            chosen_process = 'Parametric'
-
-            weight_dir = gau_entropy / (dir_entropy + gau_entropy)
-
-            prob_choice = EV_calculation(prob_optimal_dir, prob_optimal_gau, weight_dir)
-
-        chosen = optimal if np.random.rand() < prob_choice else suboptimal
-
-        reward = np.random.normal(reward_means[chosen], reward_sd[chosen])
-
-        trial_details.append(
-            {"pair": (chr(65 + pair[0]), chr(65 + pair[1])), "choice": chr(65 + chosen),
-             "reward": reward, "process": chosen_process, 'weight': weight_dir})
-
         self.update(chosen, reward, trial)
 
     # -----------------------------------------------------------------------------
@@ -1011,8 +900,8 @@ class DualProcessModel:
         self.action_selection_Dir = self.selection_mapping_Dir.get(weight_Dir)
         self.action_selection_Gau = self.selection_mapping_Gau.get(weight_Gau)
 
-        self.Gau_update_fun = self.Gau_fun_customized.get(Gau_fun, self.Gau_fun_mapping[self.model])
-        self.Dir_update_fun = self.Dir_fun_customized.get(Dir_fun, self.Dir_fun_mapping[self.model])
+        self.Gau_update_fun = self.Gau_fun_customized.get(Gau_fun, self.Gau_naive_update_with_recency)
+        self.Dir_update_fun = self.Dir_fun_customized.get(Dir_fun, self.Dir_update_with_linear_recency)
 
         print(f'============================================================')
         print(f'In the current model, the Dirichlet process is updated using {self.Dir_update_fun.__name__} '
@@ -1083,12 +972,9 @@ class DualProcessModel:
     
     """
 
-    def param_nll(self, params, reward, choiceset, choice, trial):
+    def dual_weight_nll(self, reward, choiceset, choice, trial):
 
         nll = 0
-
-        self.a = params[self.param_start + 1]
-        self.weight = params[self.param_start + 2]
 
         for r, cs, ch, t in zip(reward, choiceset, choice, trial):
             cs_mapped = self.choiceset_mapping[0][cs]
@@ -1110,45 +996,7 @@ class DualProcessModel:
 
         return nll
 
-    def multi_param_nll(self, params, reward, choiceset, choice, trial):
-
-        nll = 0
-
-        # Decide which trial plot_type it is
-        weight_mapping = {
-            0: params[1],
-            1: params[2],
-            2: params[3],
-            3: params[4],
-            4: params[5],
-            5: params[6]
-        }
-
-        for r, cs, ch, t in zip(reward, choiceset, choice, trial):
-            cs_mapped = self.choiceset_mapping[0][cs]
-
-            if np.std(self.EV_Dir) == 0 and np.std(self.EV_Gau) == 0:
-                self.EVs = self.default_EVs
-            else:
-                # Standardize the EVs
-                EV_Dir = (self.EV_Dir - np.mean(self.EV_Dir)) / np.std(self.EV_Dir)
-                EV_Gau = (self.EV_Gau - np.mean(self.EV_Gau)) / np.std(self.EV_Gau)
-
-                weight = weight_mapping[cs]
-
-                # Calculate the expected value of the model
-                self.EVs = EV_calculation(EV_Dir, EV_Gau, weight)
-
-            prob_choice = self.softmax(self.EVs[cs_mapped[0]], self.EVs[cs_mapped[1]])
-            nll += -np.log(prob_choice if ch == cs_mapped[0] else 1 - prob_choice)
-
-            self.update(ch, r, t)
-
-        return nll
-
-    def dir_nll(self, params, reward, choiceset, choice, trial):
-
-        self.a = params[self.param_start + 1]
+    def dir_nll(self, reward, choiceset, choice, trial):
 
         nll = 0
 
@@ -1164,9 +1012,7 @@ class DualProcessModel:
 
         return nll
 
-    def gau_nll(self, params, reward, choiceset, choice, trial):
-
-        self.a = params[self.param_start + 1]
+    def gau_nll(self, reward, choiceset, choice, trial):
 
         nll = 0
 
@@ -1182,7 +1028,7 @@ class DualProcessModel:
 
         return nll
 
-    def dual_nll(self, params, reward, choiceset, choice, trial):
+    def dual_binary_nll(self, reward, choiceset, choice, trial):
 
         nll = 0
 
@@ -1213,11 +1059,9 @@ class DualProcessModel:
 
         return nll
 
-    def recency_nll(self, params, reward, choiceset, choice, trial):
+    def dual_binary_recency_nll(self, reward, choiceset, choice, trial):
 
         nll = 0
-
-        self.a = params[self.param_start + 1]
 
         self.process_chosen = []
 
@@ -1246,11 +1090,9 @@ class DualProcessModel:
 
         return nll
 
-    def entropy_nll(self, params, reward, choiceset, choice, trial):
+    def dual_weight_choice_entropy_nll(self, reward, choiceset, choice, trial):
 
         nll = 0
-
-        self.weight_history = []
 
         for r, cs, ch, t in zip(reward, choiceset, choice, trial):
             cs_mapped = self.choiceset_mapping[0][cs]
@@ -1278,47 +1120,11 @@ class DualProcessModel:
 
         return nll
 
-    def entropy_recency_nll(self, params, reward, choiceset, choice, trial):
+    def dual_weight_dis_entropy_nll(self, reward, choiceset, choice, trial):
 
         nll = 0
 
         self.weight_history = []
-
-        self.a = params[self.param_start + 1]
-
-        for r, cs, ch, t in zip(reward, choiceset, choice, trial):
-            cs_mapped = self.choiceset_mapping[0][cs]
-
-            dir_prob = self.action_selection_Dir(self.EV_Dir[cs_mapped[0]], self.EV_Dir[cs_mapped[1]],
-                                                 cs_mapped[0], cs_mapped[1], len(self.reward_history[cs_mapped[0]]),
-                                                 len(self.reward_history[cs_mapped[1]]))
-            dir_prob_alt = 1 - dir_prob
-            gau_prob = self.action_selection_Gau(self.EV_Gau[cs_mapped[0]], self.EV_Gau[cs_mapped[1]],
-                                                 cs_mapped[0], cs_mapped[1], len(self.reward_history[cs_mapped[0]]),
-                                                 len(self.reward_history[cs_mapped[1]]))
-            gau_prob_alt = 1 - gau_prob
-
-            dir_entropy = entropy([dir_prob, dir_prob_alt])
-            gau_entropy = entropy([gau_prob, gau_prob_alt])
-
-            weight_dir = gau_entropy / (dir_entropy + gau_entropy)
-            self.weight_history.append(weight_dir)
-
-            prob_choice = EV_calculation(dir_prob, gau_prob, weight_dir)
-
-            nll += -np.log(prob_choice if ch == cs_mapped[0] else 1 - prob_choice)
-
-            self.update(ch, r, t)
-
-        return nll
-
-    def distribution_entropy_nll(self, params, reward, choiceset, choice, trial):
-
-        nll = 0
-
-        self.weight_history = []
-
-        self.a = params[self.param_start + 1]
 
         for r, cs, ch, t in zip(reward, choiceset, choice, trial):
             cs_mapped = self.choiceset_mapping[0][cs]
@@ -1350,13 +1156,11 @@ class DualProcessModel:
 
         return nll
 
-    def distribution_dual_nll(self, params, reward, choiceset, choice, trial):
+    def dual_binary_dis_entropy_nll(self, reward, choiceset, choice, trial):
 
         nll = 0
 
         self.process_chosen = []
-
-        self.a = params[self.param_start + 1]
 
         for r, cs, ch, t in zip(reward, choiceset, choice, trial):
             cs_mapped = self.choiceset_mapping[0][cs]
@@ -1393,15 +1197,12 @@ class DualProcessModel:
 
         return nll
 
-    def distribution_entropy_id_nll(self, params, reward, choiceset, choice, trial):
+    def dual_process_nll(self, reward, choiceset, choice, trial):
 
         nll = 0
 
         self.weight_history = []
         self.obj_weight_history = []
-
-        self.a = params[self.param_start + 1]
-        self.weight = params[self.param_start + 2]
 
         for r, cs, ch, t in zip(reward, choiceset, choice, trial):
             cs_mapped = self.choiceset_mapping[0][cs]
@@ -1421,8 +1222,8 @@ class DualProcessModel:
             self.obj_weight_history.append(obj_weight)
             self.weight_history.append(weight_dir)
 
-            dir_prob = self.action_selection_Dir(np.array(self.EV_Dir[cs_mapped[0]], self.EV_Dir[cs_mapped[1]]))[cs_mapped[0]]
-            gau_prob = self.action_selection_Gau(np.array(self.EV_Gau[cs_mapped[0]], self.EV_Gau[cs_mapped[1]]))[cs_mapped[0]]
+            dir_prob = self.action_selection_Dir(np.array([self.EV_Dir[cs_mapped[0]], self.EV_Dir[cs_mapped[1]]]), self.t)[0]
+            gau_prob = self.action_selection_Gau(np.array([self.EV_Gau[cs_mapped[0]], self.EV_Gau[cs_mapped[1]]]), self.t)[0]
 
             prob_choice = EV_calculation(dir_prob, gau_prob, weight_dir)
 
@@ -1432,15 +1233,12 @@ class DualProcessModel:
 
         return nll
 
-    def distribution_entropy_id_igt_sgt_nll(self, params, reward, choice, trial, choiceset):
+    def dual_process_igt_sgt_nll(self, reward, choiceset, choice, trial):
 
         nll = 0
 
         self.weight_history = []
         self.obj_weight_history = []
-
-        self.a = params[self.param_start + 1]
-        self.weight = params[self.param_start + 2]
 
         for r, ch, t in zip(reward, choice, trial):
 
@@ -1467,17 +1265,12 @@ class DualProcessModel:
 
         return nll
 
-    def distribution_entropy_id_sensitivity_igt_sgt_nll(self, params, reward, choice, trial, choiceset):
+    def dual_process_sensitivity_igt_sgt_nll(self, reward, choiceset, choice, trial):
 
         nll = 0
 
         self.weight_history = []
         self.obj_weight_history = []
-
-        self.a = params[self.param_start + 1]
-        self.weight = params[self.param_start + 2]
-        self.tau_gau = params[self.param_start + 3]
-        # self.tau_dir = params[self.param_start + 4]
 
         for r, ch, t in zip(reward, choice, trial):
 
@@ -1508,46 +1301,32 @@ class DualProcessModel:
 
         self.reset()
 
-        self.t = params[self.param_start]
-
-        if self.num_t == 1:
-            self.t2 = self.t
-        elif self.num_t == 2:
-            self.t2 = params[-1]
+        cfg = self._PARAM_MAP.get(self.model, {})
+        for attr, idx in cfg.items():
+            setattr(self, attr, params[idx])
 
         trial_onetask = np.arange(1, len(reward) + 1)
 
         # # in this within-subject task, we need to combine two sets of trials
         # trial = np.concatenate((trial_onetask, trial_onetask))
 
-        return self.model_mapping[self.model](params, reward, choice, trial_onetask, choiceset)
+        return self.model_mapping[self.model](reward, choiceset, choice, trial_onetask)
 
-    def negative_log_likelihood_weight(self, params, reward, choiceset, choice):
-
-        self.reset()
-
-        self.param_start = -1
-
-        trial = np.arange(1, len(reward) + 1)
-
-        return self.model_mapping[self.model](params, reward, choiceset, choice, trial)
-
-    def fit(self, data, model='Entropy_Dis_ID', num_training_trials=150, num_iterations=100, arbi_option='Entropy',
+    def fit(self, data, model='Dual_Process', num_training_trials=150, num_iterations=100, arbi_option='Entropy',
             Gau_fun='Naive_Recency', Dir_fun='Linear_Recency', weight_Gau='softmax', weight_Dir='softmax',
-            a_min=1e-32, num_t=1):
+            a_min=1e-32):
 
         self.model = model
         self.num_training_trials = num_training_trials
         self.a_min = a_min
-        self.num_t = num_t
         self.arbitration_function = self.arbitration_mapping[arbi_option]
 
         # Assign the methods based on the provided strings
         self.action_selection_Dir = self.selection_mapping_Dir.get(weight_Dir)
         self.action_selection_Gau = self.selection_mapping_Gau.get(weight_Gau)
 
-        self.Gau_update_fun = self.Gau_fun_customized.get(Gau_fun, self.Gau_fun_mapping[self.model])
-        self.Dir_update_fun = self.Dir_fun_customized.get(Dir_fun, self.Dir_fun_mapping[self.model])
+        self.Gau_update_fun = self.Gau_fun_customized.get(Gau_fun, self.Gau_naive_update_with_recency)
+        self.Dir_update_fun = self.Dir_fun_customized.get(Dir_fun, self.Dir_update_with_linear_recency)
 
         print(f'============================================================')
         print(f'In the current model, the Dirichlet process is updated using {self.Dir_update_fun.__name__} '
@@ -1590,8 +1369,8 @@ class DualProcessModel:
         self.action_selection_Dir = self.selection_mapping_Dir.get(weight_Dir)
         self.action_selection_Gau = self.selection_mapping_Gau.get(weight_Gau)
 
-        self.Gau_update_fun = self.Gau_fun_customized.get(Gau_fun, self.Gau_fun_mapping[self.model])
-        self.Dir_update_fun = self.Dir_fun_customized.get(Dir_fun, self.Dir_fun_mapping[self.model])
+        self.Gau_update_fun = self.Gau_fun_customized.get(Gau_fun, self.Gau_naive_update_with_recency)
+        self.Dir_update_fun = self.Dir_fun_customized.get(Dir_fun, self.Dir_update_with_linear_recency)
 
         post_hoc_func = self.sim_function_mapping[self.model]
 
@@ -1706,8 +1485,8 @@ class DualProcessModel:
         self.action_selection_Dir = self.selection_mapping_Dir.get(weight_Dir)
         self.action_selection_Gau = self.selection_mapping_Gau.get(weight_Gau)
 
-        self.Gau_update_fun = self.Gau_fun_customized.get(Gau_fun, self.Gau_fun_mapping[self.model])
-        self.Dir_update_fun = self.Dir_fun_customized.get(Dir_fun, self.Dir_fun_mapping[self.model])
+        self.Gau_update_fun = self.Gau_fun_customized.get(Gau_fun, self.Gau_naive_update_with_recency)
+        self.Dir_update_fun = self.Dir_fun_customized.get(Dir_fun, self.Dir_update_with_linear_recency)
 
         post_hoc_func = self.sim_function_mapping[self.model]
 
