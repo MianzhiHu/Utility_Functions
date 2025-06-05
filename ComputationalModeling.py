@@ -37,14 +37,8 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
 
     total_n = len(pdata['reward'])
 
-    if model_type in ('decay', 'delta', 'decay_choice', 'decay_win'):
-        k = 2  # Initialize the cumulative number of parameters
-    elif model_type in ('delta_asymmetric', 'decay_fre', 'ACTR', 'ACTR_Ori', 'WSLS', 'mean_var_utility'):
-        k = 3
-    elif model_type in ('delta_PVL'):
-        k = 4
-    elif model_type in ('sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV', 'delta_decay'):
-        k = model.num_params
+    # get the number of parameters for the model
+    k = model._PARAM_COUNT.get(model_type)
 
     model.iteration = 0
     best_nll = 100000  # Initialize best negative log likelihood to a large number
@@ -61,7 +55,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
         if model_type in ('decay', 'delta', 'decay_choice', 'decay_win'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999))
-        elif model_type in ('delta_PVL'):
+        elif model_type in ('delta_PVL', 'delta_PVL_relative', 'decay_PVL_relative'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999))
@@ -85,6 +79,18 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
                 initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                                  np.random.uniform(0.0001, 0.9999)]
                 bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999))
+        elif model_type == 'WSLS':
+            initial_guess = [np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999)]
+            bounds = ((0.0001, 0.9999), (0.0001, 0.9999))
+        elif model_type == 'WSLS_delta':
+            initial_guess = [np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 0.9999)]
+            bounds = ((0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999))
+        elif model_type in ('WSLS_delta_weight', 'WSLS_decay_weight'):
+            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 0.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999))
         elif model_type == 'ACTR':
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(-1.9999, -0.0001)]
@@ -93,9 +99,6 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             initial_guess = [np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(-1.9999, -0.0001)]
             bounds = ((0.0001, 0.9999), (0.0001, 0.9999), (-1.9999, -0.0001))
-        elif model_type == 'WSLS':
-            initial_guess = [np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
-                                np.random.uniform(0.0001, 0.9999)]
 
         if model.task == 'ABCD':
             result = minimize(model.negative_log_likelihood, initial_guess,
@@ -129,7 +132,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
 
 
 class ComputationalModels:
-    def __init__(self, model_type, task='ABCD', condition="Gains", num_trials=250, num_params=2):
+    def __init__(self, model_type, task='ABCD', condition="Gains", num_params=2):
         """
         Initialize the Model.
 
@@ -142,7 +145,7 @@ class ComputationalModels:
         - num_params: Number of parameters for the model.
         """
         self.num_options = 4
-        self.num_trials = num_trials
+        self.num_training_trials = None
         self.num_params = num_params
         self.choices_count = np.zeros(self.num_options)
         self.condition = condition
@@ -154,17 +157,76 @@ class ComputationalModels:
         self.reward_history_by_option = {option: [] for option in self.possible_options}
         self.AllProbs = []
         self.PE = []
-
-        self.t = None
-        self.a = None
-        self.b = None
-        self.s = None
-        self.tau = None
-        self.lamda = None
-        self.w = None  # This is for the addition of the IRL model which is not implemented yet
-        self.p_ws = None
-        self.p_ls = None
         self.iteration = 0
+
+        # define for each model_type a dict of { attr_name: param_index }
+        self._PARAM_MAP = {
+            'delta': {'t': 0, 'a': 1},
+            'delta_asymmetric': {'t': 0, 'a': 1, 'b': 2},
+            'delta_PVL': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
+            'delta_PVL_relative': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
+            'decay': {'t': 0, 'a': 1},
+            'decay_fre': {'t': 0, 'a': 1, 'b': 2},
+            'decay_choice': {'t': 0, 'a': 1},
+            'decay_win': {'t': 0, 'a': 1},
+            'decay_PVL_relative': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
+            'delta_decay': {'t': 0, 'a': 1, 'b': 2},
+            'mean_var_utility': {'t': 0, 'a': 1, 'lamda': 2},
+            'sampler_decay': {'t': 0, 'a': 1},
+            'sampler_decay_PE': {'t': 0, 'a': 1},
+            'sampler_decay_AV': {'t': 0, 'a': 1},
+            'WSLS': {'p_ws': 0, 'p_ls': 1},
+            'WSLS_delta': {'a': 1, 'p_ws': 0, 'p_ls': 2},
+            'WSLS_decay_weight': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'w': 4},
+            'WSLS_delta_weight': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'w': 4},
+            'ACTR_Ori': {'a': 1, 's': 0, 'tau': 2},
+            'ACTR': {'t': 0, 'a': 1, 'tau': 2},
+        }
+
+        # any attributes you always want to have, even if None
+        self._DEFAULT_ATTRS = [
+            'RT_initial_suboptimal', 'RT_initial_optimal', 'RT_initial',
+            'k', 's', 't', 'a', 'b', 'tau', 'lamda',
+            'p_ws', 'p_ls', 'w',
+        ]
+
+        # initialize default b overrides
+        if num_params == 2:
+            self._B_OVERRIDES = {
+                'sampler_decay': 'a',
+                'sampler_decay_PE': 'a',
+                'sampler_decay_AV': 'a',
+                'delta_decay': 'a',
+            }
+        elif num_params == 3:
+            self._B_OVERRIDES = {}
+
+        # initialize all attributes to None
+        for attr in self._DEFAULT_ATTRS:
+            setattr(self, attr, None)
+
+        self._PARAM_COUNT = {
+            **dict.fromkeys(
+                ('decay', 'delta', 'delta_RPUT', 'decay_RPUT', 'decay_choice', 'decay_win', 'WSLS'),
+                2
+            ),
+            **dict.fromkeys(
+                ('delta_asymmetric', 'decay_fre', 'ACTR', 'ACTR_Ori', 'WSLS_delta', 'mean_var_utility'),
+                3
+            ),
+            **dict.fromkeys(
+                ('delta_PVL', 'delta_PVL_relative', 'decay_PVL_relative'),
+                4
+            ),
+            **dict.fromkeys(
+                ('WSLS_delta_weight', 'WSLS_decay_weight'),
+                5
+            ),
+            **dict.fromkeys(
+                ('sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV', 'delta_decay'),
+                None  # will use model.num_params instead
+            ),
+        }
 
         self.condition_initialization = {
             "Gains": 0.5,
@@ -173,6 +235,7 @@ class ComputationalModels:
         }
 
         self.EVs = np.full(self.num_options, self.condition_initialization[self.condition])
+        self.Probs = np.full(self.num_options, 0.25)
         self.mean = np.full(self.num_options, self.condition_initialization[self.condition])
         self.var = np.full(self.num_options, 1 / 12)
         self.AV = self.condition_initialization[self.condition]
@@ -186,6 +249,7 @@ class ComputationalModels:
             'delta': self.delta_update,
             'delta_asymmetric': self.delta_asymmetric_update,
             'delta_PVL': self.delta_PVL_update,
+            'delta_PVL_relative': self.delta_PVL_relative_update,
             'decay': self.decay_update,
             'decay_fre': self.decay_fre_update,
             'decay_choice': self.decay_choice_update,
@@ -195,9 +259,12 @@ class ComputationalModels:
             'sampler_decay': self.sampler_decay_update,
             'sampler_decay_PE': self.sampler_decay_PE_update,
             'sampler_decay_AV': self.sampler_decay_AV_update,
+            'WSLS': self.WSLS_update,
+            'WSLS_delta': self.WSLS_delta_update,
+            'WSLS_delta_weight': self.WSLS_delta_weight_update,
+            'WSLS_decay_weight': self.WSLS_decay_weight_update,
             'ACTR': self.ACTR_update,
-            'ACTR_Ori': self.ACTR_update,
-            'WSLS': self.WSLS_update
+            'ACTR_Ori': self.ACTR_update
         }
 
         self.updating_function = self.updating_mapping[self.model_type]
@@ -217,6 +284,8 @@ class ComputationalModels:
             'sampler_decay_PE': self.standard_nll,
             'sampler_decay_AV': self.standard_nll,
             'WSLS': self.WSLS_nll,
+            'WSLS_delta': self.WSLS_nll,
+            'WSLS_delta_weight': self.WSLS_nll,
             'ACTR': self.ACTR_nll,
             'ACTR_Ori': self.ACTR_nll
         }
@@ -225,16 +294,23 @@ class ComputationalModels:
             'delta': self.igt_nll,
             'delta_asymmetric': self.igt_nll,
             'delta_PVL': self.igt_nll,
+            'delta_PVL_relative': self.igt_nll,
             'decay': self.igt_nll,
             'decay_fre': self.igt_nll,
             'decay_choice': self.igt_nll,
             'decay_win': self.igt_nll,
+            'decay_PVL_relative': self.igt_nll,
             'delta_decay': self.igt_nll,
             'mean_var_utility': self.igt_nll,
             'sampler_decay': self.igt_nll,
             'sampler_decay_PE': self.igt_nll,
             'sampler_decay_AV': self.igt_nll,
-            'WSLS': self.igt_nll,
+            'WSLS': self.WSLS_nll,
+            'WSLS_delta': self.WSLS_nll,
+            'WSLS_delta_weight': self.WSLS_nll,
+            'WSLS_decay_weight': self.WSLS_nll,
+            'ACTR': self.ACTR_nll,
+            'ACTR_Ori': self.ACTR_nll
         }
 
         if task == 'ABCD':
@@ -271,16 +347,21 @@ class ComputationalModels:
             'delta': self.softmax,
             'delta_asymmetric': self.softmax,
             'delta_PVL': self.softmax,
+            'delta_PVL_relative': self.softmax,
             'decay': self.softmax,
             'decay_fre': self.softmax,
             'decay_choice': self.softmax,
             'decay_win': self.softmax,
+            'decay_PVL_relative': self.softmax,
             'delta_decay': self.softmax,
             'mean_var_utility': self.softmax,
             'sampler_decay': self.softmax,
             'sampler_decay_PE': self.softmax,
             'sampler_decay_AV': self.softmax,
             'WSLS': self.softmax,
+            'WSLS_delta': self.softmax,
+            'WSLS_delta_weight': self.softmax,
+            'WSLS_decay_weight': self.softmax,
             'ACTR': self.softmax,
             'ACTR_Ori': self.softmax_ACTR
         }
@@ -299,6 +380,7 @@ class ComputationalModels:
         self.PE = []
 
         self.EVs = np.full(self.num_options, self.condition_initialization[self.condition])
+        self.Probs = np.full(self.num_options, 0.25)
         self.AV = self.condition_initialization[self.condition]
         self.mean = np.full(self.num_options, self.condition_initialization[self.condition])
         self.var = np.full(self.num_options, 1 / 12)
@@ -431,6 +513,13 @@ class ComputationalModels:
         prediction_error = utility - self.EVs[chosen]
         self.EVs[chosen] += self.a * prediction_error
 
+    def delta_PVL_relative_update(self, chosen, reward, trial, choiceset=None):
+        reward_diff = reward - self.AV
+        self.AV += reward_diff / (trial + 1)
+        utility = (np.abs(reward) ** self.b) * (reward_diff >= 0) + ((1 / self.lamda) * (np.abs(reward) ** self.b)) * (reward_diff < 0)
+        prediction_error = utility - self.EVs[chosen]
+        self.EVs[chosen] += self.a * prediction_error
+
     def decay_update(self, chosen, reward, trial, choiceset=None):
         self.EVs[chosen] += reward
         self.EVs = self.EVs * (1 - self.a)
@@ -448,6 +537,13 @@ class ComputationalModels:
         prediction_error = reward - self.AV
         self.AV += prediction_error * self.a
         self.EVs[chosen] += (prediction_error > 0)
+        self.EVs = self.EVs * (1 - self.a)
+
+    def decay_PVL_relative_update(self, chosen, reward, trial, choiceset=None):
+        reward_diff = reward - self.AV
+        self.AV += reward_diff / (trial + 1)
+        utility = (np.abs(reward) ** self.b) * (reward_diff >= 0) + ((1 / self.lamda) * (np.abs(reward) ** self.b)) * (reward_diff < 0)
+        self.EVs[chosen] += utility
         self.EVs = self.EVs * (1 - self.a)
 
     def delta_decay_update(self, chosen, reward, trial, choiceset=None):
@@ -537,15 +633,54 @@ class ComputationalModels:
             self.EVs[self.choice_history[j]] += self.AllProbs[j] * self.PE[j]
 
     def WSLS_update(self, chosen, reward, trial, choiceset=None):
-        alt_option = self.determine_alt_option(choiceset, chosen)
+        prediction_error = reward - self.AV
+        self.AV += prediction_error / (trial + 1)
+
+        pos = int(prediction_error > 0)
+        chosen_prob = pos * self.p_ws + (1 - pos) * (1 - self.p_ls)
+        other_prob = pos * (1 - self.p_ws) + (1 - pos) * self.p_ls
+        self.Probs[:] = [other_prob] * self.num_options
+        self.Probs[chosen] = chosen_prob
+
+    def WSLS_delta_update(self, chosen, reward, trial, choiceset=None):
         prediction_error = reward - self.AV
         self.AV += prediction_error * self.a
-        if prediction_error > 0:
-            self.EVs[chosen] = self.p_ws
-            self.EVs[alt_option] = 1 - self.p_ws
-        else:
-            self.EVs[chosen] = 1 - self.p_ls
-            self.EVs[alt_option] = self.p_ls
+
+        pos = int(prediction_error > 0)
+        chosen_prob = pos * self.p_ws + (1 - pos) * (1 - self.p_ls)
+        other_prob = pos * (1 - self.p_ws) + (1 - pos) * self.p_ls
+        self.Probs[:] = [other_prob] * self.num_options
+        self.Probs[chosen] = chosen_prob
+
+    def WSLS_delta_weight_update(self, chosen, reward, trial, choiceset=None):
+        # WSLS
+        prediction_error = reward - self.AV
+        self.AV += prediction_error / (trial + 1)
+
+        pos = int(prediction_error > 0)
+        chosen_prob = pos * self.p_ws + (1 - pos) * (1 - self.p_ls)
+        other_prob = pos * (1 - self.p_ws) + (1 - pos) * self.p_ls
+        self.Probs[:] = [other_prob] * self.num_options
+        self.Probs[chosen] = chosen_prob
+
+        # Decay
+        prediction_error_per_option = reward - self.EVs[chosen]
+        self.EVs[chosen] += self.a * prediction_error_per_option
+
+    def WSLS_decay_weight_update(self, chosen, reward, trial, choiceset=None):
+        # WSLS
+        prediction_error = reward - self.AV
+        self.AV += prediction_error / (trial + 1)
+
+        pos = int(prediction_error > 0)
+        chosen_prob = pos * self.p_ws + (1 - pos) * (1 - self.p_ls)
+        other_prob = pos * (1 - self.p_ws) + (1 - pos) * self.p_ls
+        self.Probs[:] = [other_prob] * self.num_options
+        self.Probs[chosen] = chosen_prob
+
+        # Decay
+        self.EVs[chosen] += reward
+        self.EVs = self.EVs * (1 - self.a)
 
     def ACTR_update(self, chosen, reward, trial, choiceset=None):
 
@@ -585,7 +720,7 @@ class ComputationalModels:
         # if trial == 200:
         #     self.reset()
 
-        if trial > 150:
+        if trial > self.num_training_trials:
             return self.EVs
 
         self.choices_count[chosen] += 1
@@ -697,17 +832,14 @@ class ComputationalModels:
 
         return nll
 
-    def WSLS_nll(self, reward, choice, trial, epsilon, choiceset=None):
+    def WSLS_nll(self, reward, choice, trial, react_time, epsilon):
 
         nll = 0
 
-        for r, cs, ch, t in zip(reward, choiceset, choice, trial):
-            cs_mapped = self.choiceset_mapping[0][cs]
-            prob_choice = self.EVs[cs_mapped[0]]
-            prob_choice_alt = self.EVs[cs_mapped[1]]
-
-            nll += -np.log(max(epsilon, prob_choice if ch == cs_mapped[0] else prob_choice_alt))
-            self.update(ch, r, t)
+        for r, ch, t, rt in zip(reward, choice, trial, react_time):
+            prob_choice = self.Probs[ch]
+            nll += -np.log(max(epsilon, prob_choice))
+            self.update(ch, r, rt, t)
 
         return nll
 
@@ -750,18 +882,11 @@ class ComputationalModels:
         """
         self.reset()
 
-        self.s = params[0] if self.model_type == 'ACTR_Ori' else None
-        self.t = params[0]
-        self.a = params[1]
-        self.p_ws, self.p_ls = params[0], params[2] if self.model_type == 'WSLS' else None
-        self.b = params[2] if (self.num_params == 3 or self.model_type in ('delta_asymmetric', 'delta_PVL')) else self.a
-        self.tau = params[2] if self.model_type in ('ACTR', 'ACTR_Ori') else None
-        if self.model_type == 'mean_var_utility':
-            self.lamda = params[2]
-        elif self.model_type == 'delta_PVL':
-            self.lamda = params[3]
-        else:
-            self.lamda = None
+        cfg = self._PARAM_MAP.get(self.model_type, {})
+        for attr, idx in cfg.items():
+            setattr(self, attr, params[idx])
+
+        self.b = getattr(self, self._B_OVERRIDES.get(self.model_type, 'b'))
 
         epsilon = 1e-12
         trial_onetask = np.arange(1, len(reward) + 1)
@@ -771,7 +896,9 @@ class ComputationalModels:
 
         return self.nll_function(reward, choice, trial_onetask, epsilon, choiceset)
 
-    def fit(self, data, num_iterations=1000, beta_lower=-1, beta_upper=1):
+    def fit(self, data, num_training_trials=150, num_iterations=1000, beta_lower=-1, beta_upper=1):
+
+        self.num_training_trials = num_training_trials
 
         # Creating a list to hold the future results
         futures = []
@@ -1225,7 +1352,7 @@ def dict_generator(df, task='ABCD'):
     COLUMN_MAP = {
         'ABCD': {
             'reward':   ['Reward'],
-            'choiceset':['SetSeen.'],
+            'choiceset':['SetSeen.', 'SetSeen '],
             'choice':   ['KeyResponse'],
         },
         'IGT_SGT': {

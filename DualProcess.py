@@ -32,6 +32,9 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
     else:
         k = 1
 
+    # get the number of parameters for the model
+    k = model._PARAM_COUNT.get(model_type)
+
     model.iteration = 0
 
     best_nll = 100000
@@ -150,7 +153,9 @@ def generate_random_trial_sequence(AB_freq, CD_freq):
 
 class DualProcessModel:
     def __init__(self, n_samples=1000, task="ABCD", default_EV=0.5, num_options=4):
+
         self.num_options = num_options
+        self.num_training_trials = None
         self.task = task
         self.default_EV = float(default_EV)
         self.num_t = None
@@ -189,6 +194,40 @@ class DualProcessModel:
 
         self.prior_mean = self.default_EV
         self.prior_var = 1 / 12
+        self.epsilon = 1e-12
+
+        # define for each model_type a dict of {attr_name: param_index }
+        self._PARAM_MAP = {
+            'Dir': {'t': 0, 'a': 1},
+            'Gau': {'t': 0, 'a': 1},
+            'Dual': {'t': 0, 'a': 1},
+            'Recency': {'t': 0, 'a': 1},
+        }
+
+        self._PARAM_COUNT = {
+            **dict.fromkeys(
+                ('Dir', 'Gau', 'Recency', 'Param_Dynamic', 'Param_Dynamic', 'Param_Dynamic_Recency',
+                 'Entropy_Recency', 'Entropy_Dis', 'Dual_Dis'),
+                2
+            ),
+            **dict.fromkeys(
+                ('Param', 'Entropy_Dis_ID'),
+                3
+            ),
+            **dict.fromkeys(
+                ('delta_PVL', 'delta_PVL_relative', 'decay_PVL_relative'),
+                4
+            ),
+            **dict.fromkeys(
+                ('WSLS_delta_weight', 'WSLS_decay_weight'),
+                5
+            ),
+            **dict.fromkeys(
+                ('sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV', 'delta_decay'),
+                None  # will use model.num_params instead
+            ),
+        }
+
 
         # Define the mapping between model parameters and input features
         self.choiceset_mapping = [
@@ -477,7 +516,7 @@ class DualProcessModel:
         # if trial == 200:
         #     self.restart_exp()
 
-        if trial > 999:
+        if trial > self.num_training_trials:
             return self.EV_Dir, self.EV_Gau
 
         else:
@@ -1387,13 +1426,13 @@ class DualProcessModel:
 
             prob_choice = EV_calculation(dir_prob, gau_prob, weight_dir)
 
-            nll += -np.log(prob_choice if ch == cs_mapped[0] else 1 - prob_choice)
+            nll += -np.log(max(self.epsilon, prob_choice) if ch == cs_mapped[0] else max(self.epsilon, 1 - prob_choice))
 
             self.update(ch, r, t)
 
         return nll
 
-    def distribution_entropy_id_igt_sgt_nll(self, params, reward, choice, trial, epsilon, choiceset):
+    def distribution_entropy_id_igt_sgt_nll(self, params, reward, choice, trial, choiceset):
 
         nll = 0
 
@@ -1422,13 +1461,13 @@ class DualProcessModel:
 
             prob_choice = EV_calculation(dir_prob, gau_prob, weight_dir)
 
-            nll += -np.log(max(epsilon, prob_choice))
+            nll += -np.log(max(self.epsilon, prob_choice))
 
             self.update(ch, r, t)
 
         return nll
 
-    def distribution_entropy_id_sensitivity_igt_sgt_nll(self, params, reward, choice, trial, epsilon, choiceset):
+    def distribution_entropy_id_sensitivity_igt_sgt_nll(self, params, reward, choice, trial, choiceset):
 
         nll = 0
 
@@ -1459,7 +1498,7 @@ class DualProcessModel:
 
             prob_choice = EV_calculation(dir_prob, gau_prob, weight_dir)
 
-            nll += -np.log(max(epsilon, prob_choice))
+            nll += -np.log(max(self.epsilon, prob_choice))
 
             self.update(ch, r, t)
 
@@ -1476,14 +1515,12 @@ class DualProcessModel:
         elif self.num_t == 2:
             self.t2 = params[-1]
 
-        epsilon = 1e-12
-
         trial_onetask = np.arange(1, len(reward) + 1)
 
         # # in this within-subject task, we need to combine two sets of trials
         # trial = np.concatenate((trial_onetask, trial_onetask))
 
-        return self.model_mapping[self.model](params, reward, choice, trial_onetask, epsilon, choiceset)
+        return self.model_mapping[self.model](params, reward, choice, trial_onetask, choiceset)
 
     def negative_log_likelihood_weight(self, params, reward, choiceset, choice):
 
@@ -1495,10 +1532,12 @@ class DualProcessModel:
 
         return self.model_mapping[self.model](params, reward, choiceset, choice, trial)
 
-    def fit(self, data, model='Entropy_Dis_ID', num_iterations=100, arbi_option='Max Prob', Gau_fun='Naive_Recency',
-            Dir_fun='Linear_Recency', weight_Gau='softmax', weight_Dir='softmax', a_min=1e-32, num_t=1):
+    def fit(self, data, model='Entropy_Dis_ID', num_training_trials=150, num_iterations=100, arbi_option='Entropy',
+            Gau_fun='Naive_Recency', Dir_fun='Linear_Recency', weight_Gau='softmax', weight_Dir='softmax',
+            a_min=1e-32, num_t=1):
 
         self.model = model
+        self.num_training_trials = num_training_trials
         self.a_min = a_min
         self.num_t = num_t
         self.arbitration_function = self.arbitration_mapping[arbi_option]
