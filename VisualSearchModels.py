@@ -36,6 +36,10 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
         if model_type in ('decay', 'delta', 'decay_choice', 'decay_win', 'delta_RPUT', 'decay_RPUT'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999))
+        elif model_type in ('delta_perseveration'):
+            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 9.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 9.9999))
         elif model_type in ('delta_PVL', 'delta_PVL_relative', 'decay_PVL_relative'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
@@ -166,6 +170,7 @@ class VisualSearchModels:
         # define for each model_type a dict of { attr_name: param_index }
         self._PARAM_MAP = {
             'delta': {'t': 0, 'a': 1},
+            'delta_perseveration': {'t': 0, 'a': 1, 'b': 2},
             'delta_asymmetric': {'t': 0, 'a': 1, 'b': 2},
             'delta_RPUT': {'t': 0, 'a': 1},
             'delta_PVL': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
@@ -223,7 +228,8 @@ class VisualSearchModels:
                 2
             ),
             **dict.fromkeys(
-                ('delta_asymmetric', 'decay_fre', 'ACTR', 'ACTR_Ori', 'WSLS_delta', 'mean_var_utility'),
+                ('delta_asymmetric', 'decay_fre', 'ACTR', 'ACTR_Ori', 'WSLS_delta', 'mean_var_utility',
+                 'delta_perseveration'),
                 3
             ),
             **dict.fromkeys(
@@ -267,6 +273,7 @@ class VisualSearchModels:
         # Mapping of updating functions to model types
         self.updating_mapping = {
             'delta': self.delta_update,
+            'delta_perseveration': self.delta_perseveration_update,
             'delta_asymmetric': self.delta_asymmetric_update,
             'delta_RPUT': self.delta_reward_per_RT_update,
             'delta_PVL': self.delta_PVL_update,
@@ -304,6 +311,7 @@ class VisualSearchModels:
         # Mapping of nll functions to model types
         self.nll_mapping_VS = {
             'delta': self.standard_nll,
+            'delta_perseveration': self.standard_nll,
             'delta_asymmetric': self.standard_nll,
             'delta_RPUT': self.standard_nll,
             'delta_PVL': self.standard_nll,
@@ -402,6 +410,10 @@ class VisualSearchModels:
         prediction_error = reward - self.EVs[chosen]
         self.EVs[chosen] += (prediction_error > 0) * self.a * prediction_error + (prediction_error < 0) * self.b * \
                             prediction_error
+
+    def delta_perseveration_update(self, chosen, reward, rt, trial):
+        prediction_error = reward - self.EVs[chosen]
+        self.EVs[chosen] += self.a * prediction_error + self.b
 
     def delta_reward_per_RT_update(self, chosen, reward, rt, trial):
         reward_per_RT = reward / np.clip(rt, 0.0001, None)  # Avoid division by zero
