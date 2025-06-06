@@ -102,7 +102,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
 
         if model.task == 'ABCD':
             result = minimize(model.negative_log_likelihood, initial_guess,
-                              args=(pdata['reward'], pdata['choiceset'], pdata['choice']),
+                              args=(pdata['reward'], pdata['choice'], pdata['choiceset']),
                               bounds=bounds, method='L-BFGS-B', options={'maxiter': 10000})
         elif model.task == 'IGT_SGT':
             result = minimize(model.negative_log_likelihood, initial_guess,
@@ -146,6 +146,7 @@ class ComputationalModels:
         """
         self.num_options = 4
         self.num_training_trials = None
+        self.num_exp_restart = None
         self.num_params = num_params
         self.choices_count = np.zeros(self.num_options)
         self.condition = condition
@@ -717,15 +718,17 @@ class ComputationalModels:
         - trial: Current trial number.
         """
 
-        # if trial == 200:
-        #     self.reset()
-
-        if trial > self.num_training_trials:
+        if trial % self.num_exp_restart == 0:
+            self.reset()
             return self.EVs
 
-        self.choices_count[chosen] += 1
+        if trial % self.num_exp_restart > self.num_training_trials:
+            return self.EVs
 
-        self.updating_function(chosen, reward, trial, choiceset)
+        else:
+            self.choices_count[chosen] += 1
+
+            self.updating_function(chosen, reward, trial, choiceset)
 
     def simulate(self, reward_means, reward_sd, AB_freq, CD_freq, num_trials=250, num_iterations=1000,
                  beta_lower=-1, beta_upper=1):
@@ -896,9 +899,10 @@ class ComputationalModels:
 
         return self.nll_function(reward, choice, trial_onetask, epsilon, choiceset)
 
-    def fit(self, data, num_training_trials=150, num_iterations=1000, beta_lower=-1, beta_upper=1):
+    def fit(self, data, num_training_trials=150, num_exp_restart=999, num_iterations=1000, beta_lower=-1, beta_upper=1):
 
         self.num_training_trials = num_training_trials
+        self.num_exp_restart = num_exp_restart
 
         # Creating a list to hold the future results
         futures = []

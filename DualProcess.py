@@ -133,6 +133,7 @@ class DualProcessModel:
 
         self.num_options = num_options
         self.num_training_trials = None
+        self.num_exp_restart = None
         self.task = task
         self.default_EV = float(default_EV)
         self.a_min = None
@@ -449,10 +450,11 @@ class DualProcessModel:
 
     def update(self, chosen, reward, trial):
 
-        # if trial == 200:
-        #     self.restart_exp()
+        if trial % self.num_exp_restart == 0:
+            self.reset()
+            return self.EV_Dir, self.EV_Gau
 
-        if trial > self.num_training_trials:
+        if trial % self.num_exp_restart > self.num_training_trials:
             return self.EV_Dir, self.EV_Gau
 
         else:
@@ -965,10 +967,10 @@ class DualProcessModel:
     # print(f'Trial: {t}, Trial Type: {cs_mapped}, Choice: {ch}, Reward: {r}')
     # print(f'Dir_EV: {self.EV_Dir}')
     # print(f'Gau_EV: {self.EV_Gau}')
-    # print(f'Dir_Prob: {dir_prob}, Dir_Prob_Alt: {dir_prob_alt}')
-    # print(f'Gau_Prob: {gau_prob}, Gau_Prob_Alt: {gau_prob_alt}')
+    # print(f'Dir_Prob: {dir_prob}, Gau_Prob: {gau_prob}')
     # print(f'Dir_Entropy: {dir_entropy}, Gau_Entropy: {gau_entropy}')
     # print(f'Weight: {weight_dir}, Prob_Choice: {prob_choice}')
+    # print(f'Alpha: {self.alpha}, Subj_Weight : {self.weight}')
     
     """
 
@@ -1312,11 +1314,12 @@ class DualProcessModel:
 
         return self.model_mapping[self.model](reward, choiceset, choice, trial_onetask)
 
-    def fit(self, data, model='Dual_Process', num_training_trials=150, num_iterations=100, arbi_option='Entropy',
-            Gau_fun='Naive_Recency', Dir_fun='Linear_Recency', weight_Gau='softmax', weight_Dir='softmax',
-            a_min=1e-32):
+    def fit(self, data, model='Dual_Process', num_training_trials=150, num_exp_restart=9999, num_iterations=100,
+            arbi_option='Entropy', Gau_fun='Naive_Recency', Dir_fun='Linear_Recency', weight_Gau='softmax',
+            weight_Dir='softmax', a_min=1e-32):
 
         self.model = model
+        self.num_exp_restart = num_exp_restart
         self.num_training_trials = num_training_trials
         self.a_min = a_min
         self.arbitration_function = self.arbitration_mapping[arbi_option]
