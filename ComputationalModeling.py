@@ -208,7 +208,7 @@ class ComputationalModels:
 
         self._PARAM_COUNT = {
             **dict.fromkeys(
-                ('decay', 'delta', 'delta_RPUT', 'decay_RPUT', 'decay_choice', 'decay_win', 'WSLS'),
+                ('decay', 'delta', 'decay_choice', 'decay_win', 'WSLS'),
                 2
             ),
             **dict.fromkeys(
@@ -857,6 +857,10 @@ class ComputationalModels:
             prob_choice_alt = self.softmax_mapping[self.model_type](np.array([self.EVs[cs_mapped[1]],
                                                                               self.EVs[cs_mapped[0]]]))[0]
             nll += -np.log(max(epsilon, prob_choice if ch == cs_mapped[0] else prob_choice_alt))
+
+            # print(f"Trial {t}: Chosen: {ch}, Reward: {r}, Choiceset: {cs}")
+            # print(f"EVs: {self.EVs}, Prob: {prob_choice if ch == cs_mapped[0] else prob_choice_alt}")
+            # print(f"alpha: {self.a}, beta: {self.b}, tau: {self.tau}, lambda: {self.lamda}")
 
             self.update(ch, r, t)
 
