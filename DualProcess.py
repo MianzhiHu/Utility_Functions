@@ -457,37 +457,36 @@ class DualProcessModel:
         if trial % self.num_exp_restart > self.num_training_trials:
             return self.EV_Dir, self.EV_Gau
 
-        else:
-            self.reward_history[chosen].append(reward)
+        self.reward_history[chosen].append(reward)
 
-            # for every trial, we need to update the EV for both the Dirichlet and Gaussian processes
-            # Gaussian process
-            self.Gau_update_fun(self.AV[chosen], self.var[chosen], reward, chosen)
+        # for every trial, we need to update the EV for both the Dirichlet and Gaussian processes
+        # Gaussian process
+        self.Gau_update_fun(self.AV[chosen], self.var[chosen], reward, chosen)
 
-            # # The four options are independent, so the covariance matrix is diagonal
-            # cov_matrix = np.diag(self.var)
-            #
-            # # Check for non-positive diagonal elements and set them to a default variance value
-            # for i in range(len(self.var)):
-            #     if cov_matrix[i, i] <= 0:
-            #         cov_matrix[i, i] = (reward - self.prior_mean) ** 2
+        # # The four options are independent, so the covariance matrix is diagonal
+        # cov_matrix = np.diag(self.var)
+        #
+        # # Check for non-positive diagonal elements and set them to a default variance value
+        # for i in range(len(self.var)):
+        #     if cov_matrix[i, i] <= 0:
+        #         cov_matrix[i, i] = (reward - self.prior_mean) ** 2
 
-            # Sample from the posterior distribution to get the expected value
-            # self.EV_Gau = np.mean(multivariate_normal.rvs(self.AV, cov_matrix, size=self.n_samples), axis=0)
-            # posterior_Gau = multivariate_normal(self.AV, cov_matrix)
-            # self.EV_Gau = posterior_Gau.mean
+        # Sample from the posterior distribution to get the expected value
+        # self.EV_Gau = np.mean(multivariate_normal.rvs(self.AV, cov_matrix, size=self.n_samples), axis=0)
+        # posterior_Gau = multivariate_normal(self.AV, cov_matrix)
+        # self.EV_Gau = posterior_Gau.mean
 
-            self.EV_Gau = self.AV
+        self.EV_Gau = self.AV
 
-            # Dirichlet process
-            AV_total = np.mean(self.EV_Gau)
+        # Dirichlet process
+        AV_total = np.mean(self.EV_Gau)
 
-            self.Dir_update_fun(chosen, reward, AV_total, trial)
+        self.Dir_update_fun(chosen, reward, AV_total, trial)
 
-            # Use the updated parameters to get the posterior Dirichlet distribution
-            # Sample from the posterior distribution to get the expected value
-            # self.EV_Dir = np.mean(dirichlet.rvs(self.alpha, size=self.n_samples), axis=0)
-            self.EV_Dir = dirichlet(self.alpha).mean()
+        # Use the updated parameters to get the posterior Dirichlet distribution
+        # Sample from the posterior distribution to get the expected value
+        # self.EV_Dir = np.mean(dirichlet.rvs(self.alpha, size=self.n_samples), axis=0)
+        self.EV_Dir = dirichlet(self.alpha).mean()
 
         return self.EV_Dir, self.EV_Gau
 
