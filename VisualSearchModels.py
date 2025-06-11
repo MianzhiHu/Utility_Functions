@@ -9,6 +9,9 @@ import time
 import ast
 from scipy.special import psi
 from scipy.stats import dirichlet
+from docx import Document
+from docx.shared import Inches
+from docx.enum.text import WD_COLOR_INDEX
 
 
 def fit_participant(model, participant_id, pdata, model_type, num_iterations=100,
@@ -113,6 +116,13 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
                              np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 23.9999),
                              np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 23.9999), (0.0001, 23.9999), (0.0001, 0.9999))
+        elif model_type in ('hybrid_WSLS_delta'):
+            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 23.9999),
+                             np.random.uniform(0.0001, 0.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 23.9999),
+                      (0.0001, 23.9999), (0.0001, 0.9999))
 
         result = minimize(model.negative_log_likelihood, initial_guess,
                           args=(pdata['reward'], pdata['choice'], pdata['react_time']),
@@ -203,6 +213,7 @@ class VisualSearchModels:
             'hybrid_delta_delta_3': {'t': 0, 'a': 1, 'b': 2, 'RT_initial_suboptimal': 3, 'RT_initial_optimal': 4, 'w': 5},
             'hybrid_decay_delta': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'w': 4},
             'hybrid_decay_delta_3': {'t': 0, 'a': 1, 'b': 2, 'RT_initial_suboptimal': 3, 'RT_initial_optimal': 4, 'w': 5},
+            'hybrid_WSLS_delta': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'RT_initial_suboptimal': 4, 'RT_initial_optimal': 5, 'w': 6},
         }
 
         # any attributes you always want to have, even if None
@@ -215,7 +226,8 @@ class VisualSearchModels:
         # initialize default b overrides
         self._B_OVERRIDES = {
             'hybrid_delta_delta': 'a',
-            'hybrid_decay_delta': 'a'
+            'hybrid_decay_delta': 'a',
+            'hybrid_WSLS_delta': 'a'
         }
 
         # initialize all attributes to None
@@ -245,6 +257,10 @@ class VisualSearchModels:
             **dict.fromkeys(
                 ('RT_delta_PVL', 'RT_decay_PVL', 'hybrid_delta_delta_3', 'hybrid_decay_delta_3'),
                 6
+            ),
+            **dict.fromkeys(
+                ['hybrid_WSLS_delta'],
+                7
             ),
             **dict.fromkeys(
                 ('sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV', 'delta_decay'),
@@ -304,6 +320,7 @@ class VisualSearchModels:
             'hybrid_delta_delta_3': self.hybrid_delta_delta,
             'hybrid_decay_delta': self.hybrid_decay_delta,
             'hybrid_decay_delta_3': self.hybrid_decay_delta,
+            'hybrid_WSLS_delta': self.hybrid_WSLS_delta,
         }
 
         self.updating_function = self.updating_mapping[self.model_type]
@@ -342,6 +359,7 @@ class VisualSearchModels:
             'hybrid_delta_delta_3': self.hybrid_nll,
             'hybrid_decay_delta': self.hybrid_nll,
             'hybrid_decay_delta_3': self.hybrid_nll,
+            'hybrid_WSLS_delta': self.hybrid_WSLS_nll,
         }
 
         self.nll_function = self.nll_mapping_VS[self.model_type]
@@ -691,6 +709,22 @@ class VisualSearchModels:
 
         self.RTs[chosen] += self.b * (rt - self.RTs[chosen])
 
+    def hybrid_WSLS_delta(self, chosen, reward, rt, trial):
+        # Reward update
+        prediction_error = reward - self.AV
+        self.AV += prediction_error / (trial + 1)
+
+        pos = int(prediction_error > 0)
+        chosen_prob = pos * self.p_ws + (1 - pos) * (1 - self.p_ls)
+        other_prob = pos * (1 - self.p_ws) + (1 - pos) * self.p_ls
+        self.Probs[:] = [other_prob] * self.num_options
+        self.Probs[chosen] = chosen_prob
+
+        # RT update
+        if trial == 1:
+            self.RTs = self.RT_initial
+        self.RTs[chosen] += self.b * (rt - self.RTs[chosen])
+
     def update(self, chosen, reward, rt, trial):
         """
         Update EVs based on the choice, received reward, and trial number.
@@ -834,6 +868,20 @@ class VisualSearchModels:
 
         for r, ch, t, rt in zip(reward, choice, trial, react_time):
             prob_choice_reward = self.softmax(np.array(self.EVs))[ch]
+            RT_EVs = [-rt for rt in self.RTs]
+            prob_choice_RT = self.softmax(np.array(RT_EVs))[ch]
+            prob_choice = self.w * prob_choice_reward + (1 - self.w) * prob_choice_RT
+            nll += -np.log(max(epsilon, prob_choice))
+            self.update(ch, r, rt, t)
+
+        return nll
+
+    def hybrid_WSLS_nll(self, reward, choice, trial, react_time, epsilon):
+
+        nll = 0
+
+        for r, ch, t, rt in zip(reward, choice, trial, react_time):
+            prob_choice_reward = self.Probs[ch]
             RT_EVs = [-rt for rt in self.RTs]
             prob_choice_RT = self.softmax(np.array(RT_EVs))[ch]
             prob_choice = self.w * prob_choice_reward + (1 - self.w) * prob_choice_RT
@@ -1160,6 +1208,107 @@ class VisualSearchModels:
         else:
             return df
 
+# ======================================================================================================================
+# Assistant functions for the VisualSearchModels class
+# ======================================================================================================================
+def create_model_summary_df(model_results, criteria='BIC'):
+    # Find the best model for each participant and group based on BIC
+    all_bics = pd.concat((df[['participant_id','Group',criteria]].assign(Model=name)
+                          for name, df in model_results.items()), ignore_index=True)
+    all_bics = all_bics.dropna(subset=['BIC']) # Ensure BIC is not NaN
+    best_idx = all_bics.groupby(['participant_id','Group'])[criteria].idxmin()
+    best = all_bics.loc[best_idx]
+
+    # Count how many times each (Model, Group) is best
+    best_counts = (best.groupby(['Model','Group']).size().rename('N_Best_Fit').reset_index())
+
+    # Calculate average AIC and BIC for each model and group
+    summary_stats = pd.concat((df.groupby('Group').agg(
+        Group=('Group', 'first'),
+        AIC=('AIC', 'mean'),
+        BIC=('BIC', 'mean')).assign(Model=name) for name, df in model_results.items()), ignore_index=True)
+
+    # Merge summary statistics with best counts
+    result = (summary_stats.merge(best_counts, on=['Model','Group'], how='left').fillna({'N_Best_Fit': 0}).sort_values(['Model','Group']).reset_index(drop=True))
+
+    return result
+
+
+def create_model_summary_table(model_results, output_path):
+    # Create model summary dataframe
+    model_summary_df = create_model_summary_df(model_results)
+
+    # Create summary table in DOCX format
+    doc = Document()
+    table = doc.add_table(rows=1, cols=5)
+    table.style = 'Table Grid'
+    header_cells = table.rows[0].cells
+    header_cells[0].text = 'Group'
+    header_cells[1].text = 'Model'
+    header_cells[2].text = 'AIC'
+    header_cells[3].text = 'BIC'
+    header_cells[4].text = 'N Best Fit'
+
+    # Find best models for each group based on BIC
+    group1_data = model_summary_df[model_summary_df['Group'] == 1]
+    group2_data = model_summary_df[model_summary_df['Group'] == 2]
+    best_model1 = group1_data.loc[group1_data['BIC'].idxmin()]
+    best_model2 = group2_data.loc[group2_data['BIC'].idxmin()]
+
+    # Add data rows for Group 1
+    row_cells = table.add_row().cells
+    row_cells[0].text = 'High-Reward-Optimal'
+    row_cells[1].text = ''
+    row_cells[2].text = ''
+    row_cells[3].text = ''
+    row_cells[4].text = ''
+
+    for model in model_results.keys():
+        row_cells = table.add_row().cells
+        row_cells[0].text = ''
+        row_cells[1].text = model
+        group_data = model_summary_df[
+            (model_summary_df['Model'] == model) &
+            (model_summary_df['Group'] == 1)]
+        row_cells[2].text = f"{group_data['AIC'].values[0]:.2f}"
+        row_cells[3].text = f"{group_data['BIC'].values[0]:.2f}"
+        row_cells[4].text = f"{int(group_data['N_Best_Fit'].values[0])}"
+
+        # Highlight best model row
+        if model == best_model1['Model']:
+            for cell in row_cells:
+                paragraph = cell.paragraphs[0]
+                run = paragraph.runs[0]
+                run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+
+    # Add data rows for Group 2
+    row_cells = table.add_row().cells
+    row_cells[0].text = 'Low-Reward-Optimal'
+    row_cells[1].text = ''
+    row_cells[2].text = ''
+    row_cells[3].text = ''
+    row_cells[4].text = ''
+
+    for model in model_results.keys():
+        row_cells = table.add_row().cells
+        row_cells[0].text = ''
+        row_cells[1].text = model
+        group_data = model_summary_df[
+            (model_summary_df['Model'] == model) &
+            (model_summary_df['Group'] == 2)]
+        row_cells[2].text = f"{group_data['AIC'].values[0]:.2f}"
+        row_cells[3].text = f"{group_data['BIC'].values[0]:.2f}"
+        row_cells[4].text = f"{int(group_data['N_Best_Fit'].values[0])}"
+
+        # Highlight best model row
+        if model == best_model2['Model']:
+            for cell in row_cells:
+                paragraph = cell.paragraphs[0]
+                run = paragraph.runs[0]
+                run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+
+    # Save the document
+    doc.save(output_path)
 
 # ======================================================================================================================
 # End of the VisualSearchModels class (Other assistant classes can be found in ComputationalModeling.py)

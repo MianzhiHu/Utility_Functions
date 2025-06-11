@@ -421,32 +421,18 @@ class DualProcessModel:
         self.var[chosen] = self.M2[chosen] / np.clip((len(self.reward_history[chosen]) - 1), 1, 9999)
 
     def Dir_update(self, chosen, reward, AV_total, trial):
-        if (reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1):
-            self.alpha[chosen] += 1
-        else:
-            pass
+        self.alpha[chosen] += ((reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1))
 
     def Dir_update_with_linear_recency(self, chosen, reward, AV_total, trial):
-        if (reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1):
-            self.alpha[chosen] += 1
-        else:
-            pass
-
+        self.alpha[chosen] += ((reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1))
         self.alpha = [np.clip(i * (1 - self.a), self.a_min, 9999) for i in self.alpha]
 
     def Dir_update_with_exp_recency(self, chosen, reward, AV_total, trial):
-        if (reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1):
-            self.alpha[chosen] += 1
-        else:
-            pass
-
+        self.alpha[chosen] += ((reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1))
         self.alpha = [np.clip(i ** (1 - self.a), self.a_min, 9999) for i in self.alpha]
 
     def Dir_update_learning(self, chosen, reward, AV_total, trial):
-        if (reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1):
-            self.alpha[chosen] += 1 * self.a
-        else:
-            pass
+        self.alpha[chosen] += self.a * ((reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1))
 
     def update(self, chosen, reward, trial):
 
