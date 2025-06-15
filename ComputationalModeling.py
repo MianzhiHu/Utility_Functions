@@ -9,7 +9,7 @@ import time
 import ast
 from scipy.special import psi
 from scipy.stats import dirichlet
-
+import copy
 
 # Mapping of choices to pairs of options for model recovery
 mapping = {
@@ -44,6 +44,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
     best_nll = 100000  # Initialize best negative log likelihood to a large number
     best_initial_guess = None
     best_parameters = None
+    best_EV = None
 
     for _ in range(num_iterations):  # Randomly initiate the starting parameter for 1000 times
 
@@ -113,6 +114,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             best_nll = result.fun
             best_initial_guess = initial_guess
             best_parameters = result.x
+            best_EV = model.EVs.copy()
 
     aic = 2 * k + 2 * best_nll
     bic = k * np.log(total_n) + 2 * best_nll
@@ -122,6 +124,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
         'best_nll': best_nll,
         'best_initial_guess': best_initial_guess,
         'best_parameters': best_parameters,
+        'best_EV': best_EV,
         'AIC': aic,
         'BIC': bic
     }
@@ -132,7 +135,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
 
 
 class ComputationalModels:
-    def __init__(self, model_type, task='ABCD', condition="Gains", num_params=2):
+    def __init__(self, model_type, task='ABCD', num_params=2):
         """
         Initialize the Model.
 
@@ -144,12 +147,14 @@ class ComputationalModels:
         - num_trials: Number of trials for the simulation.
         - num_params: Number of parameters for the model.
         """
-        self.num_options = 4
+
+        self.negative_log_likelihood = None
+        self.num_options = 4 # This is only a placeholder, it will be set in the fit method
         self.num_training_trials = None
         self.num_exp_restart = None
         self.num_params = num_params
+        self.initial_EV = None
         self.choices_count = np.zeros(self.num_options)
-        self.condition = condition
         self.possible_options = [0, 1, 2, 3]
         self.memory_weights = []
         self.choice_history = []
@@ -229,17 +234,11 @@ class ComputationalModels:
             ),
         }
 
-        self.condition_initialization = {
-            "Gains": 0.5,
-            "Losses": -0.5,
-            "Both": 0.0
-        }
-
-        self.EVs = np.full(self.num_options, self.condition_initialization[self.condition])
-        self.Probs = np.full(self.num_options, 0.25)
-        self.mean = np.full(self.num_options, self.condition_initialization[self.condition])
-        self.var = np.full(self.num_options, 1 / 12)
-        self.AV = self.condition_initialization[self.condition]
+        self.EVs = None
+        self.Probs = None
+        self.mean = None
+        self.var = None
+        self.AV = None
 
         # Model type
         self.model_type = model_type
@@ -380,10 +379,10 @@ class ComputationalModels:
         self.AllProbs = []
         self.PE = []
 
-        self.EVs = np.full(self.num_options, self.condition_initialization[self.condition])
+        self.EVs = self.initial_EV.copy()
         self.Probs = np.full(self.num_options, 0.25)
-        self.AV = self.condition_initialization[self.condition]
-        self.mean = np.full(self.num_options, self.condition_initialization[self.condition])
+        self.mean = np.mean(self.initial_EV.copy())
+        self.AV = np.mean(self.initial_EV.copy())
         self.var = np.full(self.num_options, 1 / 12)
 
     def softmax(self, x):
@@ -706,8 +705,6 @@ class ComputationalModels:
         self.EV_calculation(chosen, corresponding_rewards, activations)
         self.EV_calculation(alt_option, alt_corresponding_rewards, alt_activations)
 
-        return self.EVs
-
     def update(self, chosen, reward, trial, choiceset=None):
         """
         Update EVs based on the choice, received reward, and trial number.
@@ -718,17 +715,9 @@ class ComputationalModels:
         - trial: Current trial number.
         """
 
-        if trial % self.num_exp_restart == 0:
-            self.reset()
-            return self.EVs
+        self.choices_count[chosen] += 1
 
-        if trial % self.num_exp_restart > self.num_training_trials:
-            return self.EVs
-
-        else:
-            self.choices_count[chosen] += 1
-
-            self.updating_function(chosen, reward, trial, choiceset)
+        self.updating_function(chosen, reward, trial, choiceset)
 
     def simulate(self, reward_means, reward_sd, AB_freq, CD_freq, num_trials=250, num_iterations=1000,
                  beta_lower=-1, beta_upper=1):
@@ -824,8 +813,15 @@ class ComputationalModels:
         nll = 0
 
         for r, cs, ch, t in zip(reward, choiceset, choice, trial):
-            # in the ACTR model, we need to update the EVs before calculating the likelihood
-            self.update(ch, r, t, cs)
+
+            # if the trial is not a training trial, we skip the update
+            if t % self.num_exp_restart > self.num_training_trials:
+                pass
+            else:
+                # Otherwise, we update the model
+                # in the ACTR model, we need to update the EVs before calculating the likelihood
+                self.update(ch, r, t, cs)
+
             cs_mapped = self.choiceset_mapping[0][cs]
             prob_choice = self.softmax_mapping[self.model_type](np.array([self.EVs[cs_mapped[0]],
                                                                           self.EVs[cs_mapped[1]]]))[0]
@@ -833,16 +829,29 @@ class ComputationalModels:
                                                                               self.EVs[cs_mapped[0]]]))[0]
             nll += -np.log(max(epsilon, prob_choice if ch == cs_mapped[0] else prob_choice_alt))
 
+            if t % self.num_exp_restart == 0:
+                self.reset()
+
         return nll
 
-    def WSLS_nll(self, reward, choice, trial, react_time, epsilon):
+    def WSLS_nll(self, reward, choice, trial, epsilon, choiceset=None):
 
         nll = 0
 
-        for r, ch, t, rt in zip(reward, choice, trial, react_time):
+        for r, cs, ch, t in zip(reward, choiceset, choice, trial):
             prob_choice = self.Probs[ch]
             nll += -np.log(max(epsilon, prob_choice))
-            self.update(ch, r, rt, t)
+            # if the experiment is restarted, we reset the model
+            if t % self.num_exp_restart == 0:
+                self.reset()
+                continue
+
+            # if the trial is not a training trial, we skip the update
+            if t % self.num_exp_restart > self.num_training_trials:
+                continue
+
+            # Otherwise, we update the model
+            self.update(ch, r, t, cs)
 
         return nll
 
@@ -858,11 +867,17 @@ class ComputationalModels:
                                                                               self.EVs[cs_mapped[0]]]))[0]
             nll += -np.log(max(epsilon, prob_choice if ch == cs_mapped[0] else prob_choice_alt))
 
-            # print(f"Trial {t}: Chosen: {ch}, Reward: {r}, Choiceset: {cs}")
-            # print(f"EVs: {self.EVs}, Prob: {prob_choice if ch == cs_mapped[0] else prob_choice_alt}")
-            # print(f"alpha: {self.a}, beta: {self.b}, tau: {self.tau}, lambda: {self.lamda}")
+            # if the experiment is restarted, we reset the model
+            if t % self.num_exp_restart == 0:
+                self.reset()
+                continue
 
-            self.update(ch, r, t)
+            # if the trial is not a training trial, we skip the update
+            if t % self.num_exp_restart > self.num_training_trials:
+                continue
+
+            # Otherwise, we update the model
+            self.update(ch, r, t, cs)
 
         return nll
 
@@ -873,13 +888,48 @@ class ComputationalModels:
         for r, ch, t in zip(reward, choice, trial):
             prob_choice = self.softmax_mapping[self.model_type](np.array(self.EVs))[ch]
             nll += -np.log(max(epsilon, prob_choice))
+
+            # if the experiment is restarted, we reset the model
+            if t % self.num_exp_restart == 0:
+                self.reset()
+                continue
+
+            # if the trial is not a training trial, we skip the update
+            if t % self.num_exp_restart > self.num_training_trials:
+                continue
+
+            # Otherwise, we update the model
             self.update(ch, r, t)
 
         return nll
 
-    def negative_log_likelihood(self, params, reward, choice, choiceset=None):
+    def nll(self, reward, choice, trial, choiceset=None, epsilon=1e-12):
         """
-        Compute the negative log likelihood for the given parameters and data.
+        :param reward:
+        :param choice:
+        :param trial:
+        :param choiceset:
+        :param epsilon:
+        :return:
+        """
+        return self.nll_function(reward, choice, trial, epsilon, choiceset)
+
+    def nll_fixed_init(self, params, reward, choice, choiceset=None):
+        self.reset()
+
+        cfg = self._PARAM_MAP.get(self.model_type, {})
+        for attr, idx in cfg.items():
+            setattr(self, attr, params[idx])
+
+        trial = np.arange(1, len(reward) + 1)
+
+        self.b = getattr(self, self._B_OVERRIDES.get(self.model_type, 'b'))
+
+        return self.nll(reward, choice, trial, choiceset)
+
+    def nll_first_trial_init(self, params, reward, choice, choiceset=None):
+        """
+        Compute the negative log likelihood for the given parameters and data, initializing the model on the first trial.
 
         Parameters:
         - params: Parameters of the model.
@@ -896,17 +946,31 @@ class ComputationalModels:
         self.b = getattr(self, self._B_OVERRIDES.get(self.model_type, 'b'))
 
         epsilon = 1e-12
-        trial_onetask = np.arange(1, len(reward) + 1)
+        trial = np.arange(1, len(reward) + 1)
 
-        # # in this within-subject task, we need to combine two sets of trials
-        # trial = np.concatenate((trial_onetask, trial_onetask))
+        # Initialize the model on the first trial
+        self.update(choice[0], reward[0], trial[0], choiceset[0] if choiceset is not None else None)
 
-        return self.nll_function(reward, choice, trial_onetask, epsilon, choiceset)
+        # Populate the EVs for the first trial
+        EV_trial1 = self.EVs[choice[0]]
+        self.EVs = np.full(self.num_options, EV_trial1)
 
-    def fit(self, data, num_training_trials=150, num_exp_restart=999, num_iterations=1000, beta_lower=-1, beta_upper=1):
+        return self.nll(reward[1:], choice[1:], trial[1:], choiceset[1:] if choiceset is not None else None, epsilon)
+
+    def fit(self, data, num_training_trials=150, num_exp_restart=999, initial_EV=None, initial_mode='fixed',
+            num_iterations=100, beta_lower=-1, beta_upper=1):
 
         self.num_training_trials = num_training_trials
         self.num_exp_restart = num_exp_restart
+        self.num_options = len(initial_EV) if initial_EV is not None else 4
+        self.initial_EV = np.array(initial_EV) if initial_EV is not None else [0.0, 0.0, 0.0, 0.0]
+
+        if initial_mode == 'fixed':
+            self.negative_log_likelihood = self.nll_fixed_init
+        else:
+            self.negative_log_likelihood = self.nll_first_trial_init
+
+        print(f'Model received intial EVs: {self.initial_EV}')
 
         # Creating a list to hold the future results
         futures = []
@@ -1359,9 +1423,9 @@ def dict_generator(df, task='ABCD'):
     # define for each task which output‐keys map to which column‐name candidates
     COLUMN_MAP = {
         'ABCD': {
-            'reward':   ['Reward'],
-            'choiceset':['SetSeen.', 'SetSeen '],
-            'choice':   ['KeyResponse'],
+            'reward':   ['Reward', 'points'],
+            'choiceset':['SetSeen.', 'SetSeen ', 'setSeen'],
+            'choice':   ['KeyResponse', 'choice'],
         },
         'IGT_SGT': {
             'reward': ['outcome.1', 'outcome', 'Reward', 'SGTReward', 'OutcomeValue'],
@@ -1535,8 +1599,24 @@ def create_sliding_windows(data, window_size, id_col, filter_fn=None):
         yield pd.concat(window_data, ignore_index=True)
 
 
+def _fit_one_subject(args):
+    model, pid, pdata, init_ev, num_iterations, fit_kwargs = args
+    # clone your model so each process has its own copy
+    local_model = copy.deepcopy(model)
+    # fit just this one subject
+    df = local_model.fit(
+        {pid: pdata},
+        num_iterations=num_iterations,
+        initial_EV=init_ev,
+        **fit_kwargs
+    )
+    # grab the single‐row result
+    row = df.iloc[0].to_dict()
+    return pid, row
+
+
 def moving_window_model_fitting(data, model, task='ABCD', num_iterations=100, window_size=10,
-                                id_col='Subnum', filter_fn=None, **kwargs):
+                                id_col='Subnum', filter_fn=None, restart_EV=False, **kwargs):
     """
     Fit the model to the data using a moving window approach.
     
@@ -1549,10 +1629,13 @@ def moving_window_model_fitting(data, model, task='ABCD', num_iterations=100, wi
         id_col: Column name for participant ID
         **kwargs: Additional keyword arguments to pass to model.fit()
     """
+
+    # Initialize the result list and previous EVs dictionary
     window_results = []
+    prev_EVs = {}
+    max_window_steps = max(len(group) - window_size + 1 for _, group in data.groupby(id_col))
 
     for i, window_data in enumerate(create_sliding_windows(data, window_size, id_col, filter_fn)):
-        max_window_steps = max(len(group) - window_size + 1 for _, group in data.groupby(id_col))
 
         # detect how many participants have how many trials in the current window
         rows_per_sub = window_data.groupby(id_col).size()
@@ -1566,15 +1649,35 @@ def moving_window_model_fitting(data, model, task='ABCD', num_iterations=100, wi
         print(f'=' * 50)
 
         window_dict = dict_generator(window_data, task)
-        window_fit = model.fit(window_dict, num_iterations=num_iterations, **kwargs)
+        args_list = []
 
-        for result in window_fit.to_dict('records'):
-            result.update({
-                'window_id': i + 1,
-                'window_start': i + 1,
-                'window_end': i + window_size
-            })
-            window_results.append(result)
+        for pid, pdata in window_dict.items():
+            init_ev = None if restart_EV else prev_EVs.get(pid)
+            args_list.append((
+                model,
+                pid,
+                pdata,
+                init_ev,
+                num_iterations,
+                kwargs
+            ))
+
+        # parallel‐map over subjects in this window
+        with ProcessPoolExecutor() as executor:
+            for pid, row in executor.map(_fit_one_subject, args_list):
+                # annotate window info
+                row.update({
+                    'window_id': i + 1,
+                    'window_start': i + 1,
+                    'window_end': i + window_size
+                })
+                window_results.append(row)
+
+                # Extract the EVs for the current participant
+                final_EV = row.get('best_EV', None)
+                if final_EV is not None:
+                    # Store the final EV for the participant
+                    prev_EVs[pid] = final_EV
 
     return pd.DataFrame(window_results)
 

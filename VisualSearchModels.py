@@ -28,6 +28,8 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
     best_nll = 100000  # Initialize best negative log likelihood to a large number
     best_initial_guess = None
     best_parameters = None
+    best_EV = None
+    best_RT = None
 
     for _ in range(num_iterations):  # Randomly initiate the starting parameter for 1000 times
 
@@ -132,6 +134,8 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             best_nll = result.fun
             best_initial_guess = initial_guess
             best_parameters = result.x
+            best_EV = model.EVs.copy()
+            best_RT = model.RTs.copy()
 
     aic = 2 * k + 2 * best_nll
     bic = k * np.log(total_n) + 2 * best_nll
@@ -141,6 +145,8 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
         'best_nll': best_nll,
         'best_initial_guess': best_initial_guess,
         'best_parameters': best_parameters,
+        'best_EV': best_EV,
+        'best_RT': best_RT,
         'AIC': aic,
         'BIC': bic
     }
@@ -151,7 +157,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
 
 
 class VisualSearchModels:
-    def __init__(self, model_type, task='VS', condition="Gains", num_params=2, num_options=2):
+    def __init__(self, model_type, task='VS', num_params=2, num_options=2):
         """
         Initialize the Model.
 
@@ -163,10 +169,15 @@ class VisualSearchModels:
         - num_trials: Number of trials for the simulation.
         - num_params: Number of parameters for the model.
         """
-        self.num_options = num_options
+
+        self.negative_log_likelihood = None
+        self.num_options = 2 # This is only a placeholder, it will be set in the fit function
+        self.initial_EV = None
+        self.initial_RT = None
+        self.num_training_trials = None
+        self.num_exp_restart = None
         self.num_params = num_params
         self.choices_count = np.zeros(self.num_options)
-        self.condition = condition
         self.possible_options = [0, 1]
         self.memory_weights = []
         self.choice_history = []
@@ -176,6 +187,7 @@ class VisualSearchModels:
         self.AllProbs = []
         self.PE = []
         self.iteration = 0
+        self.epsilon = 1e-12
 
         # define for each model_type a dict of { attr_name: param_index }
         self._PARAM_MAP = {
@@ -268,18 +280,13 @@ class VisualSearchModels:
             ),
         }
 
-        self.condition_initialization = {
-            "Gains": 0.5,
-            "Losses": -0.5,
-            "Both": 0.0
-        }
 
-        self.EVs = np.full(self.num_options, self.condition_initialization[self.condition])
-        self.RTs = np.full(self.num_options, 3.0)
+        self.EVs = None
+        self.RTs = None
         self.Probs = np.full(self.num_options, 0.25)
-        self.mean = np.full(self.num_options, self.condition_initialization[self.condition])
+        self.mean = None
         self.var = np.full(self.num_options, 1 / 12)
-        self.AV = self.condition_initialization[self.condition]
+        self.AV = None
         self.RT_AV = None
 
         # Model type
@@ -377,12 +384,12 @@ class VisualSearchModels:
         self.AllProbs = []
         self.PE = []
 
-        self.EVs = np.full(self.num_options, self.condition_initialization[self.condition])
-        self.RTs = np.full(self.num_options, 3.0)
+        self.EVs = self.initial_EV.copy()
+        self.RTs = self.initial_RT.copy()
         self.Probs = np.full(self.num_options, 0.25)
-        self.AV = self.condition_initialization[self.condition]
+        self.AV = np.mean(self.initial_EV)
         self.RT_AV = None
-        self.mean = np.full(self.num_options, self.condition_initialization[self.condition])
+        self.mean = self.initial_EV.copy()
         self.var = np.full(self.num_options, 1 / 12)
 
     def softmax(self, x):
@@ -627,11 +634,12 @@ class VisualSearchModels:
         self.EVs = [-x for x in self.RTs]
     
     def RT_delta(self, chosen, reward, rt, trial):
-        if trial == 1:
-            self.RTs = self.RT_initial
+        # if trial == 1:
+        #     self.RTs = self.RT_initial
 
         self.RTs[chosen] += self.a * (rt - self.RTs[chosen])
         self.EVs = [-x for x in self.RTs]
+        print(f'RT_delta: {self.RTs}; EVs: {self.EVs}')
 
     def RT_delta_PVL(self, chosen, reward, rt, trial):
         if trial == 1:
@@ -693,8 +701,8 @@ class VisualSearchModels:
         self.EVs[chosen] += self.a * prediction_error
 
         # RT update
-        if trial == 1:
-            self.RTs = self.RT_initial
+        # if trial == 1:
+        #     self.RTs = self.RT_initial
 
         self.RTs[chosen] += self.b * (rt - self.RTs[chosen])
 
@@ -828,41 +836,73 @@ class VisualSearchModels:
     # Now we define the negative log likelihood function for the ACT-R model because it requires updating EVs before
     # calculating the likelihood
     # ==================================================================================================================
-    def WSLS_nll(self, reward, choice, trial, react_time, epsilon):
+    def WSLS_nll(self, reward, choice, trial, react_time):
 
         nll = 0
 
         for r, ch, t, rt in zip(reward, choice, trial, react_time):
             prob_choice = self.Probs[ch]
-            nll += -np.log(max(epsilon, prob_choice))
+            nll += -np.log(max(self.epsilon, prob_choice))
+
+            # if the experiment is restarted, we reset the model
+            if t % self.num_exp_restart == 0:
+                self.reset()
+                continue
+
+            # if the trial is not a training trial, we skip the update
+            if t % self.num_exp_restart > self.num_training_trials:
+                continue
+
+            # Otherwise, we update the model
             self.update(ch, r, rt, t)
 
         return nll
 
-    def standard_nll(self, reward, choice, trial, react_time, epsilon):
+    def standard_nll(self, reward, choice, trial, react_time):
 
         nll = 0
 
         for r, ch, t, rt in zip(reward, choice, trial, react_time):
             prob_choice = self.softmax(np.array(self.EVs))[ch]
-            nll += -np.log(max(epsilon, prob_choice))
+            nll += -np.log(max(self.epsilon, prob_choice))
+
+            # if the experiment is restarted, we reset the model
+            if t % self.num_exp_restart == 0:
+                self.reset()
+                continue
+
+            # if the trial is not a training trial, we skip the update
+            if t % self.num_exp_restart > self.num_training_trials:
+                continue
+
+            # Otherwise, we update the model
             self.update(ch, r, rt, t)
-            # print(f'Trial: {t}, Chosen: {ch}, Reward: {r}, alpha:{self.a}, RT: {rt}, Ex_RT: {self.RTs}, EV: {self.EVs}, Prob: {prob_choice}')
 
         return nll
 
-    def weight_nll(self, reward, choice, trial, react_time, epsilon):
+    def weight_nll(self, reward, choice, trial, react_time):
 
         nll = 0
 
         for r, ch, t, rt in zip(reward, choice, trial, react_time):
             prob_choice = self.softmax(np.array(self.EVs))[ch] * self.w + (1 - self.w) * self.Probs[ch]
-            nll += -np.log(max(epsilon, prob_choice))
+            nll += -np.log(max(self.epsilon, prob_choice))
+
+            # if the experiment is restarted, we reset the model
+            if t % self.num_exp_restart == 0:
+                self.reset()
+                continue
+
+            # if the trial is not a training trial, we skip the update
+            if t % self.num_exp_restart > self.num_training_trials:
+                continue
+
+            # Otherwise, we update the model
             self.update(ch, r, rt, t)
 
         return nll
 
-    def hybrid_nll(self, reward, choice, trial, react_time, epsilon):
+    def hybrid_nll(self, reward, choice, trial, react_time):
 
         nll = 0
 
@@ -871,12 +911,26 @@ class VisualSearchModels:
             RT_EVs = [-rt for rt in self.RTs]
             prob_choice_RT = self.softmax(np.array(RT_EVs))[ch]
             prob_choice = self.w * prob_choice_reward + (1 - self.w) * prob_choice_RT
-            nll += -np.log(max(epsilon, prob_choice))
+            nll += -np.log(max(self.epsilon, prob_choice))
+
+            print(
+                f'Trial: {t}, Chosen: {ch}, Reward: {r}, alpha:{self.a}, RT: {rt}, Ex_RT: {self.RTs}, EV: {self.EVs}, Prob: {prob_choice}')
+
+            # if the experiment is restarted, we reset the model
+            if t % self.num_exp_restart == 0:
+                self.reset()
+                continue
+
+            # if the trial is not a training trial, we skip the update
+            if t % self.num_exp_restart > self.num_training_trials:
+                continue
+
+            # Otherwise, we update the model
             self.update(ch, r, rt, t)
 
         return nll
 
-    def hybrid_WSLS_nll(self, reward, choice, trial, react_time, epsilon):
+    def hybrid_WSLS_nll(self, reward, choice, trial, react_time):
 
         nll = 0
 
@@ -885,21 +939,31 @@ class VisualSearchModels:
             RT_EVs = [-rt for rt in self.RTs]
             prob_choice_RT = self.softmax(np.array(RT_EVs))[ch]
             prob_choice = self.w * prob_choice_reward + (1 - self.w) * prob_choice_RT
-            nll += -np.log(max(epsilon, prob_choice))
+            nll += -np.log(max(self.epsilon, prob_choice))
+
+            # if the experiment is restarted, we reset the model
+            if t % self.num_exp_restart == 0:
+                self.reset()
+                continue
+
+            # if the trial is not a training trial, we skip the update
+            if t % self.num_exp_restart > self.num_training_trials:
+                continue
+
+            # Otherwise, we update the model
             self.update(ch, r, rt, t)
 
         return nll
 
-    def negative_log_likelihood(self, params, reward, choice, react_time):
+    def nll(self, reward, choice, trial, react_time):
         """
-        Compute the negative log likelihood for the given parameters and data.
+        Calculate the negative log likelihood for the model based on the provided parameters,
+        rewards, choices, and reaction times.
+        """
+        return self.nll_function(reward, choice, trial, react_time)
 
-        Parameters:
-        - params: Parameters of the model.
-        - reward: List or array of observed rewards.
-        - choiceset: List or array of available choicesets for each trial.
-        - choice: List or array of chosen options for each trial.
-        """
+    def nll_fixed_init(self, params, reward, choice, react_time):
+
         self.reset()
 
         cfg = self._PARAM_MAP.get(self.model_type, {})
@@ -917,13 +981,55 @@ class VisualSearchModels:
 
         self.b = getattr(self, self._B_OVERRIDES.get(self.model_type, 'b'))
 
-        epsilon = 1e-12
+        trial = np.arange(1, len(reward) + 1)
 
-        trial_onetask = np.arange(1, len(reward) + 1)
+        return self.nll(reward, choice, trial, react_time)
 
-        return self.nll_function(reward, choice, trial_onetask, react_time, epsilon)
+    def nll_first_trial_init(self, params, reward, choice, react_time):
 
-    def fit(self, data, num_iterations=1000, beta_lower=-1, beta_upper=1):
+        self.reset()
+
+        cfg = self._PARAM_MAP.get(self.model_type, {})
+        for attr, idx in cfg.items():
+            setattr(self, attr, params[idx])
+
+        # set the initial RTs
+        if self.RT_initial_suboptimal is not None:
+            self.RT_initial = [
+                self.RT_initial_suboptimal,
+                self.RT_initial_optimal
+            ]
+        else:
+            self.RT_initial = None
+
+        self.b = getattr(self, self._B_OVERRIDES.get(self.model_type, 'b'))
+
+        trial = np.arange(1, len(reward) + 1)
+
+        # Initialize the model on the first trial
+        self.update(choice[0], reward[0], react_time[0], trial[0])
+
+        # Populate the EVs for the first trial
+        EV_trial1 = self.EVs[choice[0]]
+        RT_trial1 = self.RTs[choice[0]]
+        self.EVs = np.full(self.num_options, EV_trial1)
+        self.RTs = np.full(self.num_options, RT_trial1)
+
+        return self.nll(reward[1:], choice[1:], trial[1:], react_time[1:])
+
+    def fit(self, data, num_training_trials=999, num_exp_restart=999, num_iterations=100, initial_EV=None,
+            initial_RT=None, initial_mode='fixed', beta_lower=-1, beta_upper=1):
+
+        self.num_training_trials = num_training_trials
+        self.num_exp_restart = num_exp_restart
+        self.num_options = len(initial_EV) if initial_EV is not None else 2
+        self.initial_EV = np.array(initial_EV or [0.0, 0.0], dtype=float)
+        self.initial_RT = np.array(initial_RT or [0.0, 0.0], dtype=float)
+
+        if initial_mode == 'fixed':
+            self.negative_log_likelihood = self.nll_fixed_init
+        else:
+            self.negative_log_likelihood = self.nll_first_trial_init
 
         # Creating a list to hold the future results
         futures = []
