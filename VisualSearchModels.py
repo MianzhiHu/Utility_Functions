@@ -879,6 +879,8 @@ class VisualSearchModels:
             prob_choice = self.softmax(np.array(self.EVs))[ch]
             nll += -np.log(max(self.epsilon, prob_choice))
 
+            print(f'Trial: {t}, Chosen: {ch}, Reward: {r}, alpha:{self.a}, RT: {rt}, Ex_RT: {self.RTs}, EV: {self.EVs}, Prob: {prob_choice}')
+
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
                 self.reset()
@@ -1029,6 +1031,8 @@ class VisualSearchModels:
         self.RTs = np.full(self.num_options, RT_trial1)
         self.AV = EV_trial1
         self.RT_AV = RT_trial1
+
+        print(f'Trial 1 - Chosen: {choice[0]}, Reward: {reward[0]}, RT: {react_time[0]}, EVs: {self.EVs}, RTs: {self.RTs}')
 
         return self.nll(reward[1:], choice[1:], trial[1:], react_time[1:])
 
