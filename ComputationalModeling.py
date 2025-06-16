@@ -846,6 +846,16 @@ class ComputationalModels:
                 self.reset()
                 continue
 
+            # if the current trial is the starting trial of the new experiment and if the initialization is set to 'first_trial',
+            # we initialize the model with the first trial
+            if t % self.num_exp_restart == 1 and self.negative_log_likelihood == self.nll_first_trial_init:
+                self.update(ch, r, t, cs)
+
+                # Populate the EVs for the first trial
+                EV_new_exp = self.EVs[ch]
+                self.EVs = np.full(self.num_options, EV_new_exp)
+                self.AV = EV_new_exp
+
             # if the trial is not a training trial, we skip the update
             if t % self.num_exp_restart > self.num_training_trials:
                 continue
@@ -872,6 +882,17 @@ class ComputationalModels:
                 self.reset()
                 continue
 
+            # if the current trial is the starting trial of the new experiment and if the initialization is set to 'first_trial',
+            # we initialize the model with the first trial
+            if t % self.num_exp_restart == 1 and self.negative_log_likelihood == self.nll_first_trial_init:
+                self.update(ch, r, t, cs)
+
+                # Populate the EVs for the first trial
+                EV_new_exp = self.EVs[ch]
+                self.EVs = np.full(self.num_options, EV_new_exp)
+                self.AV = EV_new_exp
+                continue
+
             # if the trial is not a training trial, we skip the update
             if t % self.num_exp_restart > self.num_training_trials:
                 continue
@@ -893,6 +914,16 @@ class ComputationalModels:
             if t % self.num_exp_restart == 0:
                 self.reset()
                 continue
+
+            # if the current trial is the starting trial of the new experiment and if the initialization is set to 'first_trial',
+            # we initialize the model with the first trial
+            if t % self.num_exp_restart == 1 and self.negative_log_likelihood == self.nll_first_trial_init:
+                self.update(ch, r, t)
+
+                # Populate the EVs for the first trial
+                EV_new_exp = self.EVs[ch]
+                self.EVs = np.full(self.num_options, EV_new_exp)
+                self.AV = EV_new_exp
 
             # if the trial is not a training trial, we skip the update
             if t % self.num_exp_restart > self.num_training_trials:
@@ -970,8 +1001,6 @@ class ComputationalModels:
             self.negative_log_likelihood = self.nll_fixed_init
         else:
             self.negative_log_likelihood = self.nll_first_trial_init
-
-        print(f'Model received intial EVs: {self.initial_EV}')
 
         # Creating a list to hold the future results
         futures = []
