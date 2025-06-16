@@ -655,9 +655,9 @@ class VisualSearchModels:
         self.EVs = [-x for x in self.RTs]
 
     def RT_delta_PVL(self, chosen, reward, rt, trial):
-        if trial == 1:
-            self.RTs = self.RT_initial
-            self.RT_AV = np.mean(self.RTs)
+        # if trial == 1:
+        #     self.RTs = self.RT_initial
+        #     self.RT_AV = np.mean(self.RTs)
 
         RT_diff = rt - self.RT_AV
         self.RT_AV += RT_diff / (trial + 1)
@@ -667,17 +667,17 @@ class VisualSearchModels:
         self.EVs = [-x for x in self.RTs]
 
     def RT_decay(self, chosen, reward, rt, trial):
-        if trial == 1:
-            self.RTs = self.RT_initial
+        # if trial == 1:
+        #     self.RTs = self.RT_initial
 
         self.RTs[chosen] -= rt
         self.RTs = [x * (1 + self.a) for x in self.RTs]
         self.EVs = [-x for x in self.RTs]
 
     def RT_decay_PVL(self, chosen, reward, rt, trial):
-        if trial == 1:
-            self.RTs = self.RT_initial
-            self.RT_AV = np.mean(self.RTs)
+        # if trial == 1:
+        #     self.RTs = self.RT_initial
+        #     self.RT_AV = np.mean(self.RTs)
 
         RT_diff = rt - self.RT_AV
         self.RT_AV += RT_diff / (trial + 1)
@@ -851,7 +851,7 @@ class VisualSearchModels:
     # ==================================================================================================================
     def WSLS_nll(self, reward, choice, trial, react_time):
 
-        nll = 0
+        nll = -np.log(0.5)
 
         for r, ch, t, rt in zip(reward, choice, trial, react_time):
             prob_choice = self.Probs[ch]
@@ -873,13 +873,11 @@ class VisualSearchModels:
 
     def standard_nll(self, reward, choice, trial, react_time):
 
-        nll = 0
+        nll = -np.log(0.5)
 
         for r, ch, t, rt in zip(reward, choice, trial, react_time):
             prob_choice = self.softmax(np.array(self.EVs))[ch]
             nll += -np.log(max(self.epsilon, prob_choice))
-
-            print(f'Trial: {t}, Chosen: {ch}, Reward: {r}, alpha:{self.a}, RT: {rt}, Ex_RT: {self.RTs}, EV: {self.EVs}, Prob: {prob_choice}')
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
@@ -897,7 +895,7 @@ class VisualSearchModels:
 
     def weight_nll(self, reward, choice, trial, react_time):
 
-        nll = 0
+        nll = -np.log(0.5)
 
         for r, ch, t, rt in zip(reward, choice, trial, react_time):
             prob_choice = self.softmax(np.array(self.EVs))[ch] * self.w + (1 - self.w) * self.Probs[ch]
@@ -919,7 +917,7 @@ class VisualSearchModels:
 
     def hybrid_nll(self, reward, choice, trial, react_time):
 
-        nll = 0
+        nll = -np.log(0.5)
 
         for r, ch, t, rt in zip(reward, choice, trial, react_time):
             prob_choice_reward = self.softmax(np.array(self.EVs))[ch]
@@ -927,9 +925,6 @@ class VisualSearchModels:
             prob_choice_RT = self.softmax(np.array(RT_EVs))[ch]
             prob_choice = self.w * prob_choice_reward + (1 - self.w) * prob_choice_RT
             nll += -np.log(max(self.epsilon, prob_choice))
-
-            print(
-                f'Trial: {t}, Chosen: {ch}, Reward: {r}, alpha:{self.a}, RT: {rt}, Ex_RT: {self.RTs}, EV: {self.EVs}, Prob: {prob_choice}')
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
@@ -947,7 +942,7 @@ class VisualSearchModels:
 
     def hybrid_WSLS_nll(self, reward, choice, trial, react_time):
 
-        nll = 0
+        nll = -np.log(0.5)
 
         for r, ch, t, rt in zip(reward, choice, trial, react_time):
             prob_choice_reward = self.Probs[ch]
