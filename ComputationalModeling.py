@@ -954,6 +954,7 @@ class ComputationalModels:
         # Populate the EVs for the first trial
         EV_trial1 = self.EVs[choice[0]]
         self.EVs = np.full(self.num_options, EV_trial1)
+        self.AV = EV_trial1
 
         return self.nll(reward[1:], choice[1:], trial[1:], choiceset[1:] if choiceset is not None else None, epsilon)
 
