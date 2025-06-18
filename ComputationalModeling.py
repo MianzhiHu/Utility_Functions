@@ -56,7 +56,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
         if model_type in ('decay', 'delta', 'decay_choice', 'decay_win'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999))
-        elif model_type in ('delta_PVL', 'delta_PVL_relative', 'decay_PVL_relative'):
+        elif model_type in ('delta_PVL', 'delta_PVL_relative', 'decay_PVL', 'decay_PVL_relative'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999))
@@ -80,6 +80,10 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
                 initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                                  np.random.uniform(0.0001, 0.9999)]
                 bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999))
+        elif model_type == 'decay_PVPE':
+            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999))
         elif model_type == 'WSLS':
             initial_guess = [np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 0.9999), (0.0001, 0.9999))
@@ -175,7 +179,9 @@ class ComputationalModels:
             'decay_fre': {'t': 0, 'a': 1, 'b': 2},
             'decay_choice': {'t': 0, 'a': 1},
             'decay_win': {'t': 0, 'a': 1},
+            'decay_PVL': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
             'decay_PVL_relative': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
+            'decay_PVPE': {'t': 0, 'a': 1, 'w': 2, 'lamda': 3},
             'delta_decay': {'t': 0, 'a': 1, 'b': 2},
             'mean_var_utility': {'t': 0, 'a': 1, 'lamda': 2},
             'sampler_decay': {'t': 0, 'a': 1},
@@ -221,7 +227,7 @@ class ComputationalModels:
                 3
             ),
             **dict.fromkeys(
-                ('delta_PVL', 'delta_PVL_relative', 'decay_PVL_relative'),
+                ('delta_PVL', 'delta_PVL_relative', 'decay_PVL', 'decay_PVL_relative', 'decay_PVPE'),
                 4
             ),
             **dict.fromkeys(
@@ -255,6 +261,9 @@ class ComputationalModels:
             'decay_choice': self.decay_choice_update,
             'decay_win': self.decay_win_update,
             'delta_decay': self.delta_update,
+            'decay_PVL': self.decay_PVL_update,
+            'decay_PVL_relative': self.decay_PVL_relative_update,
+            'decay_PVPE': self.decay_PVPE_update,
             'mean_var_utility': self.mean_var_utility,
             'sampler_decay': self.sampler_decay_update,
             'sampler_decay_PE': self.sampler_decay_PE_update,
@@ -274,10 +283,14 @@ class ComputationalModels:
             'delta': self.standard_nll,
             'delta_asymmetric': self.standard_nll,
             'delta_PVL': self.standard_nll,
+            'delta_PVL_relative': self.standard_nll,
             'decay': self.standard_nll,
             'decay_fre': self.standard_nll,
             'decay_choice': self.standard_nll,
             'decay_win': self.standard_nll,
+            'decay_PVL': self.standard_nll,
+            'decay_PVL_relative': self.standard_nll,
+            'decay_PVPE': self.standard_nll,
             'delta_decay': self.standard_nll,
             'mean_var_utility': self.standard_nll,
             'sampler_decay': self.standard_nll,
@@ -299,8 +312,10 @@ class ComputationalModels:
             'decay_fre': self.igt_nll,
             'decay_choice': self.igt_nll,
             'decay_win': self.igt_nll,
+            'decay_PVL': self.igt_nll,
             'decay_PVL_relative': self.igt_nll,
             'delta_decay': self.igt_nll,
+            'decay_PVPE': self.igt_nll,
             'mean_var_utility': self.igt_nll,
             'sampler_decay': self.igt_nll,
             'sampler_decay_PE': self.igt_nll,
@@ -352,7 +367,9 @@ class ComputationalModels:
             'decay_fre': self.softmax,
             'decay_choice': self.softmax,
             'decay_win': self.softmax,
+            'decay_PVL': self.softmax,
             'decay_PVL_relative': self.softmax,
+            'decay_PVPE': self.softmax,
             'delta_decay': self.softmax,
             'mean_var_utility': self.softmax,
             'sampler_decay': self.softmax,
@@ -515,41 +532,55 @@ class ComputationalModels:
 
     def delta_PVL_relative_update(self, chosen, reward, trial, choiceset=None):
         reward_diff = reward - self.AV
-        self.AV += reward_diff / (trial + 1)
-        utility = (np.abs(reward) ** self.b) * (reward_diff >= 0) + ((1 / self.lamda) * (np.abs(reward) ** self.b)) * (reward_diff < 0)
+        utility = (np.abs(reward_diff) ** self.b) * (reward_diff >= 0) + (-self.lamda * (np.abs(reward_diff) ** self.b)) * (reward_diff < 0)
         prediction_error = utility - self.EVs[chosen]
         self.EVs[chosen] += self.a * prediction_error
+        self.AV += self.a * reward_diff
 
     def decay_update(self, chosen, reward, trial, choiceset=None):
+        self.EVs = [x * (1 - self.a) for x in self.EVs]
         self.EVs[chosen] += reward
-        self.EVs = self.EVs * (1 - self.a)
 
     def decay_fre_update(self, chosen, reward, trial, choiceset=None):
         multiplier = self.choices_count[chosen] ** (-self.b)
+        self.EVs = [x * (1 - self.a) for x in self.EVs]
         self.EVs[chosen] += reward * multiplier
-        self.EVs = self.EVs * (1 - self.a)
 
     def decay_choice_update(self, chosen, reward, trial, choiceset=None):
+        self.EVs = [x * (1 - self.a) for x in self.EVs]
         self.EVs[chosen] += 1
-        self.EVs = self.EVs * (1 - self.a)
 
     def decay_win_update(self, chosen, reward, trial, choiceset=None):
         prediction_error = reward - self.AV
-        self.AV += prediction_error * self.a
+        self.EVs = [x * (1 - self.a) for x in self.EVs]
         self.EVs[chosen] += (prediction_error > 0)
-        self.EVs = self.EVs * (1 - self.a)
+        self.AV += prediction_error * self.a
+
+    def decay_PVL_update(self, chosen, reward, trial, choiceset=None):
+        utility = (np.abs(reward) ** self.b) * (reward >= 0) + (-self.lamda * (np.abs(reward) ** self.b)) * (reward < 0)
+        self.EVs = [x * (1 - self.a) for x in self.EVs]
+        self.EVs[chosen] += utility
 
     def decay_PVL_relative_update(self, chosen, reward, trial, choiceset=None):
-        reward_diff = reward - self.AV
-        self.AV += reward_diff / (trial + 1)
-        utility = (np.abs(reward) ** self.b) * (reward_diff >= 0) + ((1 / self.lamda) * (np.abs(reward) ** self.b)) * (reward_diff < 0)
+        prediction_error = reward - self.AV
+        utility = ((np.abs(prediction_error) ** self.b) * (prediction_error >= 0) +
+                   (-self.lamda * (np.abs(prediction_error) ** self.b)) * (prediction_error < 0))
+        self.EVs = [x * (1 - self.a) for x in self.EVs]
         self.EVs[chosen] += utility
-        self.EVs = self.EVs * (1 - self.a)
+        self.AV += self.a * prediction_error
+
+    def decay_PVPE_update(self, chosen, reward, trial, choiceset=None):
+        prediction_error = reward - self.AV
+        utility = ((prediction_error >= 0) * (1 - self.w) * (np.abs(prediction_error) ** self.lamda) +
+                            (prediction_error < 0) * self.w * (np.abs(prediction_error) ** self.lamda))
+        self.EVs = [x * (1 - self.a) for x in self.EVs]
+        self.EVs[chosen] += utility
+        self.AV += self.a * prediction_error
 
     def delta_decay_update(self, chosen, reward, trial, choiceset=None):
         prediction_error = reward - self.EVs[chosen]
         self.EVs[chosen] += self.a * prediction_error
-        self.EVs = self.EVs * (1 - self.b)
+        self.EVs = [x * (1 - self.b) for x in self.EVs]
 
     def mean_var_utility(self, chosen, reward, trial, choiceset=None):
         prediction_error = reward - self.mean[chosen]
@@ -594,7 +625,7 @@ class ComputationalModels:
         self.PE.append(prediction_error)
 
         # Decay weights of past trials and EVs
-        self.EVs = self.EVs * (1 - self.a)
+        self.EVs = [x * (1 - self.a) for x in self.EVs]
         self.memory_weights = [w * (1 - self.b) for w in self.memory_weights]
 
         # Compute the probabilities from memory weights
@@ -621,7 +652,7 @@ class ComputationalModels:
         self.PE.append(prediction_error)
 
         # Decay weights of past trials and EVs
-        self.EVs = self.EVs * (1 - self.a)
+        self.EVs = [x * (1 - self.a) for x in self.EVs]
         self.memory_weights = [w * (1 - self.b) for w in self.memory_weights]
 
         # Compute the probabilities from memory weights
@@ -877,6 +908,10 @@ class ComputationalModels:
                                                                               self.EVs[cs_mapped[0]]]))[0]
             nll += -np.log(max(epsilon, prob_choice if ch == cs_mapped[0] else prob_choice_alt))
 
+            if t == 1:
+                print(f'Trial {t}, Choice: {ch}, Choiceset: {cs}, Reward: {r}, EVs: {self.EVs}, AV: {self.AV}, '
+                  f'alpha: {self.a}')
+
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
                 self.reset()
@@ -986,6 +1021,13 @@ class ComputationalModels:
         EV_trial1 = self.EVs[choice[0]]
         self.EVs = np.full(self.num_options, EV_trial1)
         self.AV = EV_trial1
+
+        # self.EVs = np.full(self.num_options, reward[0])
+        # self.AV = reward[0]
+
+        # utility = (np.abs(reward[0]) ** self.b) * (reward[0] >= 0) + (np.abs(reward[0]) ** self.b) * (reward[0] < 0)
+        # self.EVs = np.full(self.num_options, utility)
+        # self.AV = utility
 
         return self.nll(reward[1:], choice[1:], trial[1:], choiceset[1:] if choiceset is not None else None, epsilon)
 
