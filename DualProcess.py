@@ -426,12 +426,12 @@ class DualProcessModel:
         self.alpha[chosen] += ((reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1))
 
     def Dir_update_with_linear_recency(self, chosen, reward, AV_total, trial):
-        self.alpha[chosen] += ((reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1))
         self.alpha = [np.clip(i * (1 - self.a), self.a_min, 9999) for i in self.alpha]
+        self.alpha[chosen] += ((reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1))
 
     def Dir_update_with_exp_recency(self, chosen, reward, AV_total, trial):
-        self.alpha[chosen] += ((reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1))
         self.alpha = [np.clip(i ** (1 - self.a), self.a_min, 9999) for i in self.alpha]
+        self.alpha[chosen] += ((reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1))
 
     def Dir_update_learning(self, chosen, reward, AV_total, trial):
         self.alpha[chosen] += self.a * ((reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1))
@@ -1544,6 +1544,36 @@ class DualProcessModel:
 
         return self.nll(reward[1:], choice[1:], trial[1:], choiceset[1:] if choiceset is not None else None)
 
+    def nll_first_trial_no_alpha_init(self, params, reward, choice, choiceset=None):
+        self.reset()
+
+        cfg = self._PARAM_MAP.get(self.model, {})
+        for attr, idx in cfg.items():
+            setattr(self, attr, params[idx])
+
+        trial = np.arange(1, len(reward) + 1)
+
+        # Temporarily force alpha=1 so that update adds full PE
+        orig_a = self.a
+        self.a = 1.0
+
+        # Initialize the model on the first trial
+        self.update(choice[0], reward[0], trial[0])
+
+        # Restore the original alpha value
+        self.a = orig_a
+
+        # Populate the EVs for the first trial
+        Gau_EV_trial1 = self.EV_Gau[choice[0]]
+        Dir_EV_trial1 = self.EV_Dir[choice[0]]
+
+        self.EV_Gau = np.full(self.num_options, Gau_EV_trial1)
+        self.alpha = np.full(self.num_options, 1.0)  # Reinitialize alpha uniformly
+        self.EV_Dir = np.full(self.num_options, 1 / self.num_options)  # Reinitialize Dirichlet EVs uniformly
+        self.AV = np.full(self.num_options, Gau_EV_trial1)
+
+        return self.nll(reward[1:], choice[1:], trial[1:], choiceset[1:] if choiceset is not None else None)
+
     def fit(self, data, model='Dual_Process', num_training_trials=150, num_exp_restart=9999, num_iterations=100,
             arbi_option='Entropy', Gau_fun='Naive_Recency', Dir_fun='Linear_Recency', weight_Gau='softmax',
             weight_Dir='softmax', a_min=1e-32, initial_EV=None, initial_mode='fixed'):
@@ -1555,10 +1585,13 @@ class DualProcessModel:
         self.initial_EV = np.array(initial_EV or [0,0,0,0], dtype=float)
         self.a_min = a_min
         self.arbitration_function = self.arbitration_mapping[arbi_option]
+
         if initial_mode == 'fixed':
             self.negative_log_likelihood = self.nll_fixed_init
-        else:
+        elif initial_mode == 'first_trial':
             self.negative_log_likelihood = self.nll_first_trial_init
+        elif initial_mode == 'first_trial_no_alpha':
+            self.negative_log_likelihood = self.nll_first_trial_no_alpha_init
 
         # Assign the methods based on the provided strings
         self.action_selection_Dir = self.selection_mapping_Dir.get(weight_Dir)

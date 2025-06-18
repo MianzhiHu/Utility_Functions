@@ -908,9 +908,8 @@ class ComputationalModels:
                                                                               self.EVs[cs_mapped[0]]]))[0]
             nll += -np.log(max(epsilon, prob_choice if ch == cs_mapped[0] else prob_choice_alt))
 
-            if t == 1:
-                print(f'Trial {t}, Choice: {ch}, Choiceset: {cs}, Reward: {r}, EVs: {self.EVs}, AV: {self.AV}, '
-                  f'alpha: {self.a}')
+            # print(f'Trial {t}, Choice: {ch}, Choiceset: {cs}, Reward: {r}, EVs: {self.EVs}, AV: {self.AV}, '
+            #       f'alpha: {self.a}')
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
@@ -1022,12 +1021,46 @@ class ComputationalModels:
         self.EVs = np.full(self.num_options, EV_trial1)
         self.AV = EV_trial1
 
-        # self.EVs = np.full(self.num_options, reward[0])
-        # self.AV = reward[0]
+        return self.nll(reward[1:], choice[1:], trial[1:], choiceset[1:] if choiceset is not None else None, epsilon)
 
-        # utility = (np.abs(reward[0]) ** self.b) * (reward[0] >= 0) + (np.abs(reward[0]) ** self.b) * (reward[0] < 0)
-        # self.EVs = np.full(self.num_options, utility)
-        # self.AV = utility
+    def nll_first_trial_no_alpha_init(self, params, reward, choice, choiceset=None):
+        """
+        Compute the negative log likelihood for the given parameters and data, initializing the model on the first trial.
+
+        Parameters:
+        - params: Parameters of the model.
+        - reward: List or array of observed rewards.
+        - choiceset: List or array of available choicesets for each trial.
+        - choice: List or array of chosen options for each trial.
+        """
+        self.reset()
+
+        cfg = self._PARAM_MAP.get(self.model_type, {})
+        for attr, idx in cfg.items():
+            setattr(self, attr, params[idx])
+
+        self.b = getattr(self, self._B_OVERRIDES.get(self.model_type, 'b'))
+
+        epsilon = 1e-12
+        trial = np.arange(1, len(reward) + 1)
+
+        # Temporarily force alpha=1 so that update adds full PE
+        orig_a = self.a
+        self.a = 1.0
+
+        # Initialize the model on the first trial
+        self.update(choice[0], reward[0], trial[0], choiceset[0] if choiceset is not None else None)
+
+        # Restore the original alpha value
+        self.a = orig_a
+
+        # Populate the EVs for the first trial
+        EV_trial1 = self.EVs[choice[0]]
+        self.EVs = np.full(self.num_options, EV_trial1)
+        self.AV = EV_trial1
+
+        # print(f'Trial 1, Choice: {choice[0]}, Choiceset: {choiceset[0] if choiceset is not None else None}, '
+        #       f'Reward: {reward[0]}, EVs: {self.EVs}, AV: {self.AV}, alpha: {self.a}')
 
         return self.nll(reward[1:], choice[1:], trial[1:], choiceset[1:] if choiceset is not None else None, epsilon)
 
@@ -1041,8 +1074,10 @@ class ComputationalModels:
 
         if initial_mode == 'fixed':
             self.negative_log_likelihood = self.nll_fixed_init
-        else:
+        elif initial_mode == 'first_trial':
             self.negative_log_likelihood = self.nll_first_trial_init
+        elif initial_mode == 'first_trial_no_alpha':
+            self.negative_log_likelihood = self.nll_first_trial_no_alpha_init
 
         # Creating a list to hold the future results
         futures = []
