@@ -21,9 +21,6 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
 
     total_n = len(pdata['reward'])  # Total number of trials
 
-    # get the number of parameters for the model
-    k = model._PARAM_COUNT.get(model_type)
-
     model.iteration = 0
     best_nll = 100000  # Initialize best negative log likelihood to a large number
     best_initial_guess = None
@@ -90,55 +87,50 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
                              np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999))
         elif model_type == 'RT_exp_basic':
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 23.9999),
-                             np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0, 0.01)]
-            bounds = ((0.0001, 4.9999),(0.0, 0.01), (0.0001, 23.9999), (0.0001, 23.9999))
-        if model_type in ('RT_delta'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999))
-        if model_type in ('RT_decay'):
+            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0, 0.01),
+                             np.random.uniform(0.3000, 23.9999)]
+            bounds = ((0.0001, 4.9999), (0.0, 0.01), (0.3000, 23.9999))
+        elif model_type in ('RT_delta'):
+            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.3000, 23.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.3000, 23.9999))
+        elif model_type in ('RT_decay'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 4.9999),
-                             np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 23.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 4.9999), (0.0001, 23.9999), (0.0001, 23.9999))
+                             np.random.uniform(0.3000, 23.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 4.9999), (0.3000, 23.9999))
         elif model_type in ('RT_exp_delta'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 23.9999),
-                             np.random.uniform(0.0, 0.01)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 23.9999), (0.0001, 23.9999), (0.0, 0.01))
+                             np.random.uniform(0.3000, 23.9999), np.random.uniform(0.0, 0.01)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.3000, 23.9999), (0.0, 0.01))
         elif model_type in ('RT_exp_decay'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 4.9999),
-                             np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 23.9999),
-                             np.random.uniform(0.0, 0.01)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 23.9999), (0.0001, 23.9999), (0.0, 0.01))
+                             np.random.uniform(0.3000, 23.9999), np.random.uniform(0.0, 0.01)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.3000, 23.9999), (0.0, 0.01))
         elif model_type in ('RT_delta_PVL'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 23.9999),
-                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 23.9999), (0.0001, 23.9999), (0.0001, 0.9999),
-                      (0.0001, 4.9999))
+                             np.random.uniform(0.3000, 23.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 4.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.3000, 23.9999), (0.0001, 0.9999), (0.0001, 4.9999))
         elif model_type in ('RT_decay_PVL'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 4.9999),
-                             np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 23.9999),
-                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 23.9999), (0.0001, 23.9999), (0.0001, 0.9999),
-                      (0.0001, 4.9999))
+                             np.random.uniform(0.3000, 23.9999), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 4.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.3000, 23.9999), (0.0001, 0.9999), (0.0001, 4.9999))
         elif model_type in ('hybrid_delta_delta', 'hybrid_decay_delta'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 23.9999),
-                             np.random.uniform(0.0001, 0.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 23.9999), (0.0001, 23.9999), (0.0001, 0.9999))
+                             np.random.uniform(0.3000, 23.9999), np.random.uniform(0.0001, 0.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.3000, 23.9999), (0.0001, 0.9999))
         elif model_type in ('hybrid_delta_delta_3', 'hybrid_decay_delta_3'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 23.9999),
-                             np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 0.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 23.9999), (0.0001, 23.9999), (0.0001, 0.9999))
+                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.3000, 23.9999),
+                             np.random.uniform(0.0001, 0.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.3000, 23.9999), (0.0001, 0.9999))
         elif model_type in ('hybrid_WSLS_delta'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 23.9999), np.random.uniform(0.0001, 23.9999),
-                             np.random.uniform(0.0001, 0.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 23.9999),
-                      (0.0001, 23.9999), (0.0001, 0.9999))
+                             np.random.uniform(0.3000, 23.9999), np.random.uniform(0.0001, 0.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.3000, 23.9999),
+                      (0.0001, 0.9999))
 
         result = minimize(model.negative_log_likelihood, initial_guess,
                           args=(pdata['reward'], pdata['choice'], pdata['react_time']),
@@ -151,6 +143,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             best_EV = model.EVs.copy()
             best_RT = model.RTs.copy()
 
+    k = len(best_parameters)  # Number of parameters
     aic = 2 * k + 2 * best_nll
     bic = k * np.log(total_n) + 2 * best_nll
 
@@ -184,7 +177,8 @@ class VisualSearchModels:
         - num_params: Number of parameters for the model.
         """
 
-        self.negative_log_likelihood = None
+        self.model_initialization = None
+        self.skip_first = None
         self.num_options = 2 # This is only a placeholder, it will be set in the fit function
         self.initial_EV = None
         self.initial_RT = None
@@ -228,18 +222,18 @@ class VisualSearchModels:
             'WSLS_delta': {'a': 1, 'p_ws': 0, 'p_ls': 2},
             'WSLS_decay_weight': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'w': 4},
             'WSLS_delta_weight': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'w': 4},
-            'RT_exp_basic': {'t': 0, 'k': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3},
-            'RT_delta': {'t': 0, 'a': 1},
-            'RT_decay': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3},
-            'RT_exp_delta': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'k': 4},
-            'RT_exp_decay': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'k': 4},
-            'RT_delta_PVL': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'b': 4, 'lamda': 5},
-            'RT_decay_PVL': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'b': 4, 'lamda': 5},
-            'hybrid_delta_delta': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'w': 4},
-            'hybrid_delta_delta_3': {'t': 0, 'a': 1, 'b': 2, 'RT_initial_suboptimal': 3, 'RT_initial_optimal': 4, 'w': 5},
-            'hybrid_decay_delta': {'t': 0, 'a': 1, 'RT_initial_suboptimal': 2, 'RT_initial_optimal': 3, 'w': 4},
-            'hybrid_decay_delta_3': {'t': 0, 'a': 1, 'b': 2, 'RT_initial_suboptimal': 3, 'RT_initial_optimal': 4, 'w': 5},
-            'hybrid_WSLS_delta': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'RT_initial_suboptimal': 4, 'RT_initial_optimal': 5, 'w': 6},
+            'RT_exp_basic': {'t': 0, 'k': 1, 'RT_initial': 2},
+            'RT_delta': {'t': 0, 'a': 1, 'RT_initial': 2},
+            'RT_decay': {'t': 0, 'a': 1, 'RT_initial': 2},
+            'RT_exp_delta': {'t': 0, 'a': 1, 'RT_initial': 2, 'k': 3},
+            'RT_exp_decay': {'t': 0, 'a': 1, 'RT_initial': 2, 'k': 3},
+            'RT_delta_PVL': {'t': 0, 'a': 1, 'RT_initial': 2, 'b': 3, 'lamda': 4},
+            'RT_decay_PVL': {'t': 0, 'a': 1, 'RT_initial': 2, 'b': 3, 'lamda': 4},
+            'hybrid_delta_delta': {'t': 0, 'a': 1, 'RT_initial': 2, 'w': 3},
+            'hybrid_delta_delta_3': {'t': 0, 'a': 1, 'b': 2, 'RT_initial': 3, 'w': 4},
+            'hybrid_decay_delta': {'t': 0, 'a': 1, 'RT_initial': 2, 'w': 3},
+            'hybrid_decay_delta_3': {'t': 0, 'a': 1, 'b': 2, 'RT_initial': 3, 'w': 4},
+            'hybrid_WSLS_delta': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'RT_initial': 4, 'w': 5},
         }
 
         # any attributes you always want to have, even if None
@@ -259,41 +253,6 @@ class VisualSearchModels:
         # initialize all attributes to None
         for attr in self._DEFAULT_ATTRS:
             setattr(self, attr, None)
-
-        self._PARAM_COUNT = {
-            **dict.fromkeys(
-                ('decay', 'delta', 'delta_RPUT', 'decay_RPUT', 'decay_choice', 'decay_win', 'WSLS', 'RT_delta'),
-                2
-            ),
-            **dict.fromkeys(
-                ('delta_asymmetric', 'decay_fre', 'ACTR', 'ACTR_Ori', 'WSLS_delta', 'mean_var_utility',
-                 'delta_perseveration'),
-                3
-            ),
-            **dict.fromkeys(
-                ('delta_PVL', 'delta_PVL_relative', 'decay_PVL_relative', 'RT_exp_basic',
-                 'RT_decay'),
-                4
-            ),
-            **dict.fromkeys(
-                ('WSLS_delta_weight', 'WSLS_decay_weight', 'RT_exp_delta', 'RT_exp_decay',
-                 'hybrid_delta_delta', 'hybrid_decay_delta'),
-                5
-            ),
-            **dict.fromkeys(
-                ('RT_delta_PVL', 'RT_decay_PVL', 'hybrid_delta_delta_3', 'hybrid_decay_delta_3'),
-                6
-            ),
-            **dict.fromkeys(
-                ['hybrid_WSLS_delta'],
-                7
-            ),
-            **dict.fromkeys(
-                ('sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV', 'delta_decay'),
-                None  # will use model.num_params instead
-            ),
-        }
-
 
         self.EVs = None
         self.RTs = None
@@ -466,46 +425,47 @@ class VisualSearchModels:
 
     def delta_PVL_relative_update(self, chosen, reward, rt, trial):
         reward_diff = reward - self.AV
-        self.AV += reward_diff / (trial + 1)
-        utility = (np.abs(reward) ** self.b) * (reward_diff >= 0) + ((1 / self.lamda) * (np.abs(reward) ** self.b)) * (reward_diff < 0)
+        utility = (np.abs(reward_diff) ** self.b) * (reward_diff >= 0) + (-self.lamda * (np.abs(reward_diff) ** self.b)) * (reward_diff < 0)
         prediction_error = utility - self.EVs[chosen]
         self.EVs[chosen] += self.a * prediction_error
+        self.AV += self.a * reward_diff
 
     def decay_update(self, chosen, reward, rt, trial):
-        self.EVs[chosen] += reward
         self.EVs = self.EVs * (1 - self.a)
+        self.EVs[chosen] += reward
 
     def decay_fre_update(self, chosen, reward, rt, trial):
         multiplier = self.choices_count[chosen] ** (-self.b)
-        self.EVs[chosen] += reward * multiplier
         self.EVs = self.EVs * (1 - self.a)
+        self.EVs[chosen] += reward * multiplier
 
     def decay_choice_update(self, chosen, reward, rt, trial):
-        self.EVs[chosen] += 1
         self.EVs = self.EVs * (1 - self.a)
+        self.EVs[chosen] += 1
 
     def decay_PVL_relative_update(self, chosen, reward, rt, trial):
-        reward_diff = reward - self.AV
-        self.AV += reward_diff / (trial + 1)
-        utility = (np.abs(reward) ** self.b) * (reward_diff >= 0) + ((1 / self.lamda) * (np.abs(reward) ** self.b)) * (reward_diff < 0)
+        prediction_error = reward - self.AV
+        utility = ((np.abs(prediction_error) ** self.b) * (prediction_error >= 0) +
+                   (-self.lamda * (np.abs(prediction_error) ** self.b)) * (prediction_error < 0))
+        self.EVs = [x * (1 - self.a) for x in self.EVs]
         self.EVs[chosen] += utility
-        self.EVs = self.EVs * (1 - self.a)
+        self.AV += self.a * prediction_error
 
     def decay_reward_per_RT_update(self, chosen, reward, rt, trial):
         reward_per_RT = reward / np.clip(rt, 0.0001, None)  # Avoid division by zero
-        self.EVs[chosen] += self.a * reward_per_RT
-        self.EVs = self.EVs * (1 - self.a)
+        self.EVs = [x * (1 - self.a) for x in self.EVs]
+        self.EVs[chosen] += reward_per_RT
 
     def decay_win_update(self, chosen, reward, rt, trial):
         prediction_error = reward - self.AV
         self.AV += prediction_error * self.a
-        self.EVs[chosen] += (prediction_error > 0)
         self.EVs = self.EVs * (1 - self.a)
+        self.EVs[chosen] += (prediction_error > 0)
 
     def delta_decay_update(self, chosen, reward, rt, trial):
         prediction_error = reward - self.EVs[chosen]
-        self.EVs[chosen] += self.a * prediction_error
         self.EVs = self.EVs * (1 - self.b)
+        self.EVs[chosen] += self.a * prediction_error
 
     def mean_var_utility(self, chosen, reward, rt, trial):
         prediction_error = reward - self.mean[chosen]
@@ -635,74 +595,52 @@ class VisualSearchModels:
         self.Probs[chosen] = chosen_prob
 
         # Decay
-        self.EVs[chosen] += reward
         self.EVs = self.EVs * (1 - self.a)
+        self.EVs[chosen] += reward
 
     # ------------------------------------------------------------------------------------------------------------------
     # Now we define RT-related models specifically for the visual search task
     # ------------------------------------------------------------------------------------------------------------------
     def RT_exp_basic(self, chosen, reward, rt, trial):
-        if trial == 1:
-            self.RTs = self.RT_initial
-        self.RTs[chosen] = self.RT_initial[chosen] * np.exp(-1 * self.k * trial)
+        self.RTs[chosen] = self.RTs[chosen] * np.exp(-1 * self.k)
         self.EVs = [-x for x in self.RTs]
     
     def RT_delta(self, chosen, reward, rt, trial):
-        # if trial == 1:
-        #     self.RTs = self.RT_initial
-
         self.RTs[chosen] += self.a * (rt - self.RTs[chosen])
         self.EVs = [-x for x in self.RTs]
 
     def RT_delta_PVL(self, chosen, reward, rt, trial):
-        # if trial == 1:
-        #     self.RTs = self.RT_initial
-        #     self.RT_AV = np.mean(self.RTs)
-
         RT_diff = rt - self.RT_AV
-        self.RT_AV += RT_diff / (trial + 1)
-        utility = (self.lamda * np.abs(rt) ** self.b) * (RT_diff >= 0) + (np.abs(rt) ** self.b) * (RT_diff < 0)
+        self.RT_AV += self.a * RT_diff
+        utility = (self.lamda * np.abs(RT_diff) ** self.b) * (RT_diff >= 0) + (-1 * np.abs(RT_diff) ** self.b) * (RT_diff < 0)
         prediction_error = utility - self.RTs[chosen]
         self.RTs[chosen] += self.a * prediction_error
         self.EVs = [-x for x in self.RTs]
 
     def RT_decay(self, chosen, reward, rt, trial):
-        # if trial == 1:
-        #     self.RTs = self.RT_initial
-
+        self.RTs = [x * (self.a - 1) for x in self.RTs]
         self.RTs[chosen] -= rt
-        self.RTs = [x * (1 + self.a) for x in self.RTs]
         self.EVs = [-x for x in self.RTs]
 
     def RT_decay_PVL(self, chosen, reward, rt, trial):
-        # if trial == 1:
-        #     self.RTs = self.RT_initial
-        #     self.RT_AV = np.mean(self.RTs)
-
         RT_diff = rt - self.RT_AV
         self.RT_AV += RT_diff / (trial + 1)
         utility = (self.lamda * np.abs(rt) ** self.b) * (RT_diff >= 0) + (np.abs(rt) ** self.b) * (RT_diff < 0)
+        self.RTs = [x * (self.a - 1) for x in self.RTs]
         self.RTs[chosen] -= utility
-        self.RTs = [x * (1 + self.a) for x in self.RTs]
         self.EVs = [-x for x in self.RTs]
 
     def RT_exp_delta(self, chosen, reward, rt, trial):
-        if trial == 1:
-            self.RTs = self.RT_initial
-
-        pred = self.RT_initial[chosen] * np.exp(-1 * self.k * trial)
+        pred = self.RTs[chosen] * np.exp(-1 * self.k)
         prediction_error = rt - pred
         self.RTs[chosen] += self.a * prediction_error
-            # prediction_error = rt - self.RTs[chosen]
-            # self.RTs[chosen] = self.RT_initial[chosen] * np.exp(-1 * self.k * rt) + self.a * prediction_error
         self.EVs = [-x for x in self.RTs]
 
     def RT_exp_decay(self, chosen, reward, rt, trial):
-        if trial == 1:
-            self.RTs = self.RT_initial
-
-        self.RTs[chosen] = self.RT_initial[chosen] * np.exp(-1 * self.k * trial) - rt
-        self.RTs = [x * (1 + self.a) for x in self.RTs]
+        pred = self.RTs[chosen] * np.exp(-1 * self.k)
+        prediction_error = pred - rt
+        self.RTs = [x * (self.a - 1) for x in self.RTs]
+        self.RTs[chosen] -= prediction_error
         self.EVs = [-x for x in self.RTs]
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -714,20 +652,14 @@ class VisualSearchModels:
         self.EVs[chosen] += self.a * prediction_error
 
         # RT update
-        # if trial == 1:
-        #     self.RTs = self.RT_initial
-
         self.RTs[chosen] += self.b * (rt - self.RTs[chosen])
 
     def hybrid_decay_delta(self, chosen, reward, rt, trial):
         # Reward update
-        self.EVs[chosen] += reward
         self.EVs = self.EVs * (1 - self.a)
+        self.EVs[chosen] += reward
 
         # RT update
-        if trial == 1:
-            self.RTs = self.RT_initial
-
         self.RTs[chosen] += self.b * (rt - self.RTs[chosen])
 
     def hybrid_WSLS_delta(self, chosen, reward, rt, trial):
@@ -742,8 +674,6 @@ class VisualSearchModels:
         self.Probs[chosen] = chosen_prob
 
         # RT update
-        if trial == 1:
-            self.RTs = self.RT_initial
         self.RTs[chosen] += self.b * (rt - self.RTs[chosen])
 
     def update(self, chosen, reward, rt, trial):
@@ -857,15 +787,6 @@ class VisualSearchModels:
             prob_choice = self.Probs[ch]
             nll += -np.log(max(self.epsilon, prob_choice))
 
-            # if the experiment is restarted, we reset the model
-            if t % self.num_exp_restart == 0:
-                self.reset()
-                continue
-
-            # if the trial is not a training trial, we skip the update
-            if t % self.num_exp_restart > self.num_training_trials:
-                continue
-
             # Otherwise, we update the model
             self.update(ch, r, rt, t)
 
@@ -879,14 +800,7 @@ class VisualSearchModels:
             prob_choice = self.softmax(np.array(self.EVs))[ch]
             nll += -np.log(max(self.epsilon, prob_choice))
 
-            # if the experiment is restarted, we reset the model
-            if t % self.num_exp_restart == 0:
-                self.reset()
-                continue
-
-            # if the trial is not a training trial, we skip the update
-            if t % self.num_exp_restart > self.num_training_trials:
-                continue
+            print(f"Trial {t}: Choice {ch}, Reward {r}, RT {rt}, EVs {self.EVs}, RTs {self.RTs}, RT_AV {self.RT_AV}, alpha {self.a}, Prob: {prob_choice}")
 
             # Otherwise, we update the model
             self.update(ch, r, rt, t)
@@ -900,15 +814,6 @@ class VisualSearchModels:
         for r, ch, t, rt in zip(reward, choice, trial, react_time):
             prob_choice = self.softmax(np.array(self.EVs))[ch] * self.w + (1 - self.w) * self.Probs[ch]
             nll += -np.log(max(self.epsilon, prob_choice))
-
-            # if the experiment is restarted, we reset the model
-            if t % self.num_exp_restart == 0:
-                self.reset()
-                continue
-
-            # if the trial is not a training trial, we skip the update
-            if t % self.num_exp_restart > self.num_training_trials:
-                continue
 
             # Otherwise, we update the model
             self.update(ch, r, rt, t)
@@ -926,15 +831,6 @@ class VisualSearchModels:
             prob_choice = self.w * prob_choice_reward + (1 - self.w) * prob_choice_RT
             nll += -np.log(max(self.epsilon, prob_choice))
 
-            # if the experiment is restarted, we reset the model
-            if t % self.num_exp_restart == 0:
-                self.reset()
-                continue
-
-            # if the trial is not a training trial, we skip the update
-            if t % self.num_exp_restart > self.num_training_trials:
-                continue
-
             # Otherwise, we update the model
             self.update(ch, r, rt, t)
 
@@ -951,71 +847,45 @@ class VisualSearchModels:
             prob_choice = self.w * prob_choice_reward + (1 - self.w) * prob_choice_RT
             nll += -np.log(max(self.epsilon, prob_choice))
 
-            # if the experiment is restarted, we reset the model
-            if t % self.num_exp_restart == 0:
-                self.reset()
-                continue
-
-            # if the trial is not a training trial, we skip the update
-            if t % self.num_exp_restart > self.num_training_trials:
-                continue
-
             # Otherwise, we update the model
             self.update(ch, r, rt, t)
 
         return nll
 
-    def nll(self, reward, choice, trial, react_time):
+    def negative_log_likelihood(self, params, reward, choice, react_time):
         """
         Calculate the negative log likelihood for the model based on the provided parameters,
         rewards, choices, and reaction times.
         """
+        self.reset()
+
+        cfg = self._PARAM_MAP.get(self.model_type, {})
+        for attr, idx in cfg.items():
+            setattr(self, attr, params[idx])
+
+        # set the initial RTs
+        if self.RT_initial is not None:
+            self.RTs = np.full(self.num_options, self.RT_initial)
+            self.RT_AV = self.RT_initial
+
+        self.b = getattr(self, self._B_OVERRIDES.get(self.model_type, 'b'))
+
+        trial = np.arange(1, len(reward) + 1)
+
+        self.model_initialization(reward, choice, react_time, trial)
+
+        # slice data if necessary
+        s = slice(self.skip_first, None)
+        reward = reward[s]
+        choice = choice[s]
+        trial = trial[s]
+
         return self.nll_function(reward, choice, trial, react_time)
 
-    def nll_fixed_init(self, params, reward, choice, react_time):
+    def fixed_init(self, reward, choice, react_time, trial):
+        pass
 
-        self.reset()
-
-        cfg = self._PARAM_MAP.get(self.model_type, {})
-        for attr, idx in cfg.items():
-            setattr(self, attr, params[idx])
-
-        # set the initial RTs
-        if self.RT_initial_suboptimal is not None:
-            self.RT_initial = [
-                self.RT_initial_suboptimal,
-                self.RT_initial_optimal
-            ]
-        else:
-            self.RT_initial = None
-
-        self.b = getattr(self, self._B_OVERRIDES.get(self.model_type, 'b'))
-
-        trial = np.arange(1, len(reward) + 1)
-
-        return self.nll(reward, choice, trial, react_time)
-
-    def nll_first_trial_init(self, params, reward, choice, react_time):
-
-        self.reset()
-
-        cfg = self._PARAM_MAP.get(self.model_type, {})
-        for attr, idx in cfg.items():
-            setattr(self, attr, params[idx])
-
-        # set the initial RTs
-        if self.RT_initial_suboptimal is not None:
-            self.RT_initial = [
-                self.RT_initial_suboptimal,
-                self.RT_initial_optimal
-            ]
-        else:
-            self.RT_initial = None
-
-        self.b = getattr(self, self._B_OVERRIDES.get(self.model_type, 'b'))
-
-        trial = np.arange(1, len(reward) + 1)
-
+    def first_trial_init(self, reward, choice, react_time, trial):
         # Initialize the model on the first trial
         self.update(choice[0], reward[0], react_time[0], trial[0])
 
@@ -1027,9 +897,24 @@ class VisualSearchModels:
         self.AV = EV_trial1
         self.RT_AV = RT_trial1
 
-        print(f'Trial 1 - Chosen: {choice[0]}, Reward: {reward[0]}, RT: {react_time[0]}, EVs: {self.EVs}, RTs: {self.RTs}')
+    def first_trial_init_no_alpha_init(self, reward, choice, react_time, trial):
+        # Temporarily force alpha=1 so that update adds full PE
+        orig_a = self.a
+        self.a = 1.0
 
-        return self.nll(reward[1:], choice[1:], trial[1:], react_time[1:])
+        # Initialize the model on the first trial
+        self.update(choice[0], reward[0], react_time[0], trial[0])
+
+        # Restore the original alpha value
+        self.a = orig_a
+
+        # Populate the EVs for the first trial
+        EV_trial1 = self.EVs[choice[0]]
+        RT_trial1 = self.RTs[choice[0]]
+        self.EVs = np.full(self.num_options, EV_trial1)
+        self.RTs = np.full(self.num_options, RT_trial1)
+        self.AV = EV_trial1
+        self.RT_AV = RT_trial1
 
     def fit(self, data, num_training_trials=999, num_exp_restart=999, num_iterations=100, initial_EV=None,
             initial_RT=None, initial_mode='fixed', beta_lower=-1, beta_upper=1):
@@ -1041,9 +926,12 @@ class VisualSearchModels:
         self.initial_RT = np.array(initial_RT or [0.0, 0.0], dtype=float)
 
         if initial_mode == 'fixed':
-            self.negative_log_likelihood = self.nll_fixed_init
-        else:
-            self.negative_log_likelihood = self.nll_first_trial_init
+            self.model_initialization = self.fixed_init
+        elif initial_mode == 'first_trial':
+            self.model_initialization = self.first_trial_init
+        elif initial_mode == 'first_trial_no_alpha':
+            self.model_initialization = self.first_trial_no_alpha_init
+        self.skip_first = 0 if initial_mode == 'fixed' else 1
 
         # Creating a list to hold the future results
         futures = []
