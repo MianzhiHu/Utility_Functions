@@ -56,7 +56,8 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
         if model_type in ('decay', 'delta', 'decay_choice', 'decay_win'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999))
-        elif model_type in ('delta_PVL', 'delta_PVL_relative', 'decay_PVL', 'decay_PVL_relative'):
+        elif model_type in ('delta_PVL', 'delta_PVL_relative', 'delta_PVL_relative_RR', 'decay_PVL',
+                            'decay_PVL_relative', 'decay_PVL_relative_RR'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999))
@@ -178,12 +179,14 @@ class ComputationalModels:
             'delta_asymmetric': {'t': 0, 'a': 1, 'b': 2},
             'delta_PVL': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
             'delta_PVL_relative': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
+            'delta_PVL_relative_RR': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
             'decay': {'t': 0, 'a': 1},
             'decay_fre': {'t': 0, 'a': 1, 'b': 2},
             'decay_choice': {'t': 0, 'a': 1},
             'decay_win': {'t': 0, 'a': 1},
             'decay_PVL': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
             'decay_PVL_relative': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
+            'decay_PVL_relative_RR': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
             'decay_PVPE': {'t': 0, 'a': 1, 'w': 2, 'lamda': 3},
             'delta_decay': {'t': 0, 'a': 1, 'b': 2},
             'mean_var_utility': {'t': 0, 'a': 1, 'lamda': 2},
@@ -230,7 +233,8 @@ class ComputationalModels:
                 3
             ),
             **dict.fromkeys(
-                ('delta_PVL', 'delta_PVL_relative', 'decay_PVL', 'decay_PVL_relative', 'decay_PVPE'),
+                ('delta_PVL', 'delta_PVL_relative', 'delta_PVL_relative_RR', 'decay_PVL', 'decay_PVL_relative',
+                 'decay_PVL_relative_RR', 'decay_PVPE'),
                 4
             ),
             **dict.fromkeys(
@@ -259,6 +263,7 @@ class ComputationalModels:
             'delta_asymmetric': self.delta_asymmetric_update,
             'delta_PVL': self.delta_PVL_update,
             'delta_PVL_relative': self.delta_PVL_relative_update,
+            'delta_PVL_relative_RR': self.delta_PVL_relative_RR_update,
             'decay': self.decay_update,
             'decay_fre': self.decay_fre_update,
             'decay_choice': self.decay_choice_update,
@@ -266,6 +271,7 @@ class ComputationalModels:
             'delta_decay': self.delta_update,
             'decay_PVL': self.decay_PVL_update,
             'decay_PVL_relative': self.decay_PVL_relative_update,
+            'decay_PVL_relative_RR': self.decay_PVL_relative_RR_update,
             'decay_PVPE': self.decay_PVPE_update,
             'mean_var_utility': self.mean_var_utility,
             'sampler_decay': self.sampler_decay_update,
@@ -287,12 +293,14 @@ class ComputationalModels:
             'delta_asymmetric': self.standard_nll,
             'delta_PVL': self.standard_nll,
             'delta_PVL_relative': self.standard_nll,
+            'delta_PVL_relative_RR': self.standard_nll,
             'decay': self.standard_nll,
             'decay_fre': self.standard_nll,
             'decay_choice': self.standard_nll,
             'decay_win': self.standard_nll,
             'decay_PVL': self.standard_nll,
             'decay_PVL_relative': self.standard_nll,
+            'decay_PVL_relative_RR': self.standard_nll,
             'decay_PVPE': self.standard_nll,
             'delta_decay': self.standard_nll,
             'mean_var_utility': self.standard_nll,
@@ -311,12 +319,14 @@ class ComputationalModels:
             'delta_asymmetric': self.igt_nll,
             'delta_PVL': self.igt_nll,
             'delta_PVL_relative': self.igt_nll,
+            'delta_PVL_relative_RR': self.igt_nll,
             'decay': self.igt_nll,
             'decay_fre': self.igt_nll,
             'decay_choice': self.igt_nll,
             'decay_win': self.igt_nll,
             'decay_PVL': self.igt_nll,
             'decay_PVL_relative': self.igt_nll,
+            'decay_PVL_relative_RR': self.igt_nll,
             'delta_decay': self.igt_nll,
             'decay_PVPE': self.igt_nll,
             'mean_var_utility': self.igt_nll,
@@ -366,12 +376,14 @@ class ComputationalModels:
             'delta_asymmetric': self.softmax,
             'delta_PVL': self.softmax,
             'delta_PVL_relative': self.softmax,
+            'delta_PVL_relative_RR': self.softmax,
             'decay': self.softmax,
             'decay_fre': self.softmax,
             'decay_choice': self.softmax,
             'decay_win': self.softmax,
             'decay_PVL': self.softmax,
             'decay_PVL_relative': self.softmax,
+            'decay_PVL_relative_RR': self.softmax,
             'decay_PVPE': self.softmax,
             'delta_decay': self.softmax,
             'mean_var_utility': self.softmax,
@@ -540,6 +552,14 @@ class ComputationalModels:
         self.EVs[chosen] += self.a * prediction_error
         self.AV += self.a * reward_diff
 
+    def delta_PVL_relative_RR_update(self, chosen, reward, trial, choiceset=None):
+        # This function is similar to delta_PVL_relative_update, but it uses the raw reward (RR) instead of the reward difference.
+        reward_diff = reward - self.AV
+        utility = (np.abs(reward) ** self.b) * (reward_diff >= 0) + ((1 / self.lamda) * (np.abs(reward_diff) ** self.b)) * (reward_diff < 0)
+        prediction_error = utility - self.EVs[chosen]
+        self.EVs[chosen] += self.a * prediction_error
+        self.AV += self.a * reward_diff
+
     def decay_update(self, chosen, reward, trial, choiceset=None):
         self.EVs = [x * (1 - self.a) for x in self.EVs]
         self.EVs[chosen] += reward
@@ -568,6 +588,15 @@ class ComputationalModels:
         prediction_error = reward - self.AV
         utility = ((np.abs(prediction_error) ** self.b) * (prediction_error >= 0) +
                    (-self.lamda * (np.abs(prediction_error) ** self.b)) * (prediction_error < 0))
+        self.EVs = [x * (1 - self.a) for x in self.EVs]
+        self.EVs[chosen] += utility
+        self.AV += self.a * prediction_error
+
+    def decay_PVL_relative_RR_update(self, chosen, reward, trial, choiceset=None):
+        # This function is similar to decay_PVL_relative_update, but it uses the raw reward (RR) instead of the reward difference.
+        prediction_error = reward - self.AV
+        utility = ((np.abs(reward) ** self.b) * (prediction_error >= 0) +
+                   ((1 / self.lamda) * (np.abs(prediction_error) ** self.b)) * (prediction_error < 0))
         self.EVs = [x * (1 - self.a) for x in self.EVs]
         self.EVs[chosen] += utility
         self.AV += self.a * prediction_error
