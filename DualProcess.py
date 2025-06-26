@@ -77,8 +77,8 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
                 best_process_chosen = model.process_chosen
                 best_weight = model.weight_history
                 best_obj_weight = model.obj_weight_history
-                best_EV_Gau = model.EV_Gau
-                best_EV_Dir = model.EV_Dir
+                best_EV_Gau = model.final_Gau_EVs
+                best_EV_Dir = model.final_Dir_EVs
                 best_EV = model.EVs
         elif isinstance(result, (float, np.float64)):
             best_nll = result
@@ -131,7 +131,10 @@ def generate_random_trial_sequence(AB_freq, CD_freq):
 class DualProcessModel:
     def __init__(self, n_samples=1000, task="ABCD"):
 
-        self.negative_log_likelihood = None
+        self.final_Dir_EVs = None
+        self.final_Gau_EVs = None
+        self.skip_first = None
+        self.model_initialization = None
         self.num_options = 4 # This is only a placeholder, it will be set in the fit function
         self.num_training_trials = None
         self.num_exp_restart = None
@@ -399,7 +402,7 @@ class DualProcessModel:
 
     def Gau_naive_update(self, prior_mean, prior_var, reward, chosen, n=1):
         self.AV[chosen] = np.mean(self.reward_history[chosen])
-        self.var[chosen] = np.var(self.reward_history[chosen], ddof=1) if len(self.reward_history[chosen]) > 1 else (reward - self.prior_mean) ** 2
+        self.var[chosen] = np.var(self.reward_history[chosen], ddof=1) if len(self.reward_history[chosen]) > 1 else (reward - prior_mean) ** 2
 
     def Gau_naive_update_with_recency(self, prior_mean, prior_var, reward, chosen, n=1):
         delta = self.a * (reward - prior_mean)
@@ -422,19 +425,19 @@ class DualProcessModel:
         self.M2[chosen] += delta * (reward_normalized - self.AV[chosen])
         self.var[chosen] = self.M2[chosen] / np.clip((len(self.reward_history[chosen]) - 1), 1, 9999)
 
-    def Dir_update(self, chosen, reward, AV_total, trial):
-        self.alpha[chosen] += ((reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1))
+    def Dir_update(self, chosen, reward, AV_total):
+        self.alpha[chosen] += (reward > AV_total)
 
-    def Dir_update_with_linear_recency(self, chosen, reward, AV_total, trial):
+    def Dir_update_with_linear_recency(self, chosen, reward, AV_total):
         self.alpha = [np.clip(i * (1 - self.a), self.a_min, 9999) for i in self.alpha]
-        self.alpha[chosen] += ((reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1))
+        self.alpha[chosen] += (reward > AV_total)
 
-    def Dir_update_with_exp_recency(self, chosen, reward, AV_total, trial):
+    def Dir_update_with_exp_recency(self, chosen, reward, AV_total):
         self.alpha = [np.clip(i ** (1 - self.a), self.a_min, 9999) for i in self.alpha]
-        self.alpha[chosen] += ((reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1))
+        self.alpha[chosen] += (reward > AV_total)
 
-    def Dir_update_learning(self, chosen, reward, AV_total, trial):
-        self.alpha[chosen] += self.a * ((reward > AV_total and trial > 1) or (reward > self.prior_mean and trial == 1))
+    def Dir_update_learning(self, chosen, reward, AV_total):
+        self.alpha[chosen] += self.a * (reward > AV_total)
 
     def update(self, chosen, reward, trial):
 
@@ -462,7 +465,7 @@ class DualProcessModel:
         # Dirichlet process
         AV_total = np.mean(self.EV_Gau)
 
-        self.Dir_update_fun(chosen, reward, AV_total, trial)
+        self.Dir_update_fun(chosen, reward, AV_total)
 
         # Use the updated parameters to get the posterior Dirichlet distribution
         # Sample from the posterior distribution to get the expected value
@@ -972,21 +975,17 @@ class DualProcessModel:
             prob_choice = EV_calculation(dir_prob, gau_prob, self.weight)
 
             nll += -np.log(prob_choice if ch == cs_mapped[0] else 1 - prob_choice)
+
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
+                self.final_Gau_EVs = self.EV_Gau.copy()
+                self.final_Dir_EVs = self.EV_Dir.copy()
                 self.reset()
                 continue
 
-            if t % self.num_exp_restart == 1 and self.negative_log_likelihood == self.nll_first_trial_init:
-                self.update(ch, r, t)
-
-                # Populate the EVs for the first trial
-                Gau_EV_trial1 = self.EV_Gau[ch]
-                Dir_EV_trial1 = self.EV_Dir[ch]
-
-                self.EV_Gau = np.full(self.num_options, Gau_EV_trial1)
-                self.EV_Dir = np.full(self.num_options, Dir_EV_trial1)
-                self.AV = np.full(self.num_options, Gau_EV_trial1)
+            # if the trial the starting trial of a new experiment, we initialize the model
+            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+                self.model_initialization(reward, choice, trial, t-2)
                 continue
 
             # if the trial is not a training trial, we skip the update
@@ -1012,19 +1011,14 @@ class DualProcessModel:
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
+                self.final_Gau_EVs = self.EV_Gau.copy()
+                self.final_Dir_EVs = self.EV_Dir.copy()
                 self.reset()
                 continue
 
-            if t % self.num_exp_restart == 1 and self.negative_log_likelihood == self.nll_first_trial_init:
-                self.update(ch, r, t)
-
-                # Populate the EVs for the first trial
-                Gau_EV_trial1 = self.EV_Gau[ch]
-                Dir_EV_trial1 = self.EV_Dir[ch]
-
-                self.EV_Gau = np.full(self.num_options, Gau_EV_trial1)
-                self.EV_Dir = np.full(self.num_options, Dir_EV_trial1)
-                self.AV = np.full(self.num_options, Gau_EV_trial1)
+            # if the trial the starting trial of a new experiment, we initialize the model
+            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+                self.model_initialization(reward, choice, trial, t-2)
                 continue
 
             # if the trial is not a training trial, we skip the update
@@ -1049,19 +1043,14 @@ class DualProcessModel:
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
+                self.final_Gau_EVs = self.EV_Gau.copy()
+                self.final_Dir_EVs = self.EV_Dir.copy()
                 self.reset()
                 continue
 
-            if t % self.num_exp_restart == 1 and self.negative_log_likelihood == self.nll_first_trial_init:
-                self.update(ch, r, t)
-
-                # Populate the EVs for the first trial
-                Gau_EV_trial1 = self.EV_Gau[ch]
-                Dir_EV_trial1 = self.EV_Dir[ch]
-
-                self.EV_Gau = np.full(self.num_options, Gau_EV_trial1)
-                self.EV_Dir = np.full(self.num_options, Dir_EV_trial1)
-                self.AV = np.full(self.num_options, Gau_EV_trial1)
+            # if the trial the starting trial of a new experiment, we initialize the model
+            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+                self.model_initialization(reward, choice, trial, t-2)
                 continue
 
             # if the trial is not a training trial, we skip the update
@@ -1101,19 +1090,14 @@ class DualProcessModel:
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
+                self.final_Gau_EVs = self.EV_Gau.copy()
+                self.final_Dir_EVs = self.EV_Dir.copy()
                 self.reset()
                 continue
 
-            if t % self.num_exp_restart == 1 and self.negative_log_likelihood == self.nll_first_trial_init:
-                self.update(ch, r, t)
-
-                # Populate the EVs for the first trial
-                Gau_EV_trial1 = self.EV_Gau[ch]
-                Dir_EV_trial1 = self.EV_Dir[ch]
-
-                self.EV_Gau = np.full(self.num_options, Gau_EV_trial1)
-                self.EV_Dir = np.full(self.num_options, Dir_EV_trial1)
-                self.AV = np.full(self.num_options, Gau_EV_trial1)
+            # if the trial the starting trial of a new experiment, we initialize the model
+            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+                self.model_initialization(reward, choice, trial, t-2)
                 continue
 
             # if the trial is not a training trial, we skip the update
@@ -1153,19 +1137,14 @@ class DualProcessModel:
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
+                self.final_Gau_EVs = self.EV_Gau.copy()
+                self.final_Dir_EVs = self.EV_Dir.copy()
                 self.reset()
                 continue
 
-            if t % self.num_exp_restart == 1 and self.negative_log_likelihood == self.nll_first_trial_init:
-                self.update(ch, r, t)
-
-                # Populate the EVs for the first trial
-                Gau_EV_trial1 = self.EV_Gau[ch]
-                Dir_EV_trial1 = self.EV_Dir[ch]
-
-                self.EV_Gau = np.full(self.num_options, Gau_EV_trial1)
-                self.EV_Dir = np.full(self.num_options, Dir_EV_trial1)
-                self.AV = np.full(self.num_options, Gau_EV_trial1)
+            # if the trial the starting trial of a new experiment, we initialize the model
+            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+                self.model_initialization(reward, choice, trial, t-2)
                 continue
 
             # if the trial is not a training trial, we skip the update
@@ -1204,26 +1183,19 @@ class DualProcessModel:
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
+                self.final_Gau_EVs = self.EV_Gau.copy()
+                self.final_Dir_EVs = self.EV_Dir.copy()
                 self.reset()
                 continue
 
-            if t % self.num_exp_restart == 1 and self.negative_log_likelihood == self.nll_first_trial_init:
-                self.update(ch, r, t)
-
-                # Populate the EVs for the first trial
-                Gau_EV_trial1 = self.EV_Gau[ch]
-                Dir_EV_trial1 = self.EV_Dir[ch]
-
-                self.EV_Gau = np.full(self.num_options, Gau_EV_trial1)
-                self.EV_Dir = np.full(self.num_options, Dir_EV_trial1)
-                self.AV = np.full(self.num_options, Gau_EV_trial1)
+            # if the trial the starting trial of a new experiment, we initialize the model
+            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+                self.model_initialization(reward, choice, trial, t-2)
                 continue
 
             # if the trial is not a training trial, we skip the update
             if t % self.num_exp_restart > self.num_training_trials:
                 continue
-
-            self.update(ch, r, t)
 
         return nll
 
@@ -1261,19 +1233,14 @@ class DualProcessModel:
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
+                self.final_Gau_EVs = self.EV_Gau.copy()
+                self.final_Dir_EVs = self.EV_Dir.copy()
                 self.reset()
                 continue
 
-            if t % self.num_exp_restart == 1 and self.negative_log_likelihood == self.nll_first_trial_init:
-                self.update(ch, r, t)
-
-                # Populate the EVs for the first trial
-                Gau_EV_trial1 = self.EV_Gau[ch]
-                Dir_EV_trial1 = self.EV_Dir[ch]
-
-                self.EV_Gau = np.full(self.num_options, Gau_EV_trial1)
-                self.EV_Dir = np.full(self.num_options, Dir_EV_trial1)
-                self.AV = np.full(self.num_options, Gau_EV_trial1)
+            # if the trial the starting trial of a new experiment, we initialize the model
+            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+                self.model_initialization(reward, choice, trial, t-2)
                 continue
 
             # if the trial is not a training trial, we skip the update
@@ -1323,19 +1290,14 @@ class DualProcessModel:
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
+                self.final_Gau_EVs = self.EV_Gau.copy()
+                self.final_Dir_EVs = self.EV_Dir.copy()
                 self.reset()
                 continue
 
-            if t % self.num_exp_restart == 1 and self.negative_log_likelihood == self.nll_first_trial_init:
-                self.update(ch, r, t)
-
-                # Populate the EVs for the first trial
-                Gau_EV_trial1 = self.EV_Gau[ch]
-                Dir_EV_trial1 = self.EV_Dir[ch]
-
-                self.EV_Gau = np.full(self.num_options, Gau_EV_trial1)
-                self.EV_Dir = np.full(self.num_options, Dir_EV_trial1)
-                self.AV = np.full(self.num_options, Gau_EV_trial1)
+            # if the trial the starting trial of a new experiment, we initialize the model
+            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+                self.model_initialization(reward, choice, trial, t-2)
                 continue
 
             # if the trial is not a training trial, we skip the update
@@ -1380,21 +1342,14 @@ class DualProcessModel:
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
+                self.final_Gau_EVs = self.EV_Gau.copy()
+                self.final_Dir_EVs = self.EV_Dir.copy()
                 self.reset()
                 continue
 
-            # if the current trial is the starting trial of the new experiment and if the initialization is set to 'first_trial',
-            # we initialize the model with the first trial
-            if t % self.num_exp_restart == 1 and self.negative_log_likelihood == self.nll_first_trial_init:
-                self.update(ch, r, t)
-
-                # Populate the EVs for the first trial
-                Gau_EV_trial1 = self.EV_Gau[ch]
-                Dir_EV_trial1 = self.EV_Dir[ch]
-
-                self.EV_Gau = np.full(self.num_options, Gau_EV_trial1)
-                self.EV_Dir = np.full(self.num_options, Dir_EV_trial1)
-                self.AV = np.full(self.num_options, Gau_EV_trial1)
+            # if the trial the starting trial of a new experiment, we initialize the model
+            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+                self.model_initialization(reward, choice, trial, t-2)
                 continue
 
             # if the trial is not a training trial, we skip the update
@@ -1435,19 +1390,13 @@ class DualProcessModel:
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
+                self.final_Gau_EVs = self.EV_Gau.copy()
+                self.final_Dir_EVs = self.EV_Dir.copy()
                 self.reset()
                 continue
 
-            if t % self.num_exp_restart == 1 and self.negative_log_likelihood == self.nll_first_trial_init:
-                self.update(ch, r, t)
-
-                # Populate the EVs for the first trial
-                Gau_EV_trial1 = self.EV_Gau[ch]
-                Dir_EV_trial1 = self.EV_Dir[ch]
-
-                self.EV_Gau = np.full(self.num_options, Gau_EV_trial1)
-                self.EV_Dir = np.full(self.num_options, Dir_EV_trial1)
-                self.AV = np.full(self.num_options, Gau_EV_trial1)
+            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+                self.model_initialization(reward, choice, trial, t-2)
                 continue
 
             # if the trial is not a training trial, we skip the update
@@ -1488,7 +1437,13 @@ class DualProcessModel:
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
+                self.final_Gau_EVs = self.EV_Gau.copy()
+                self.final_Dir_EVs = self.EV_Dir.copy()
                 self.reset()
+                continue
+
+            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+                self.model_initialization(reward, choice, trial, choiceset)
                 continue
 
             # if the trial is not a training trial, we skip the update
@@ -1499,7 +1454,7 @@ class DualProcessModel:
 
         return nll
 
-    def nll(self, reward, choice, trial, choiceset=None):
+    def negative_log_likelihood(self, params, reward, choice, choiceset=None):
         """
         :param params:
         :param reward:
@@ -1509,70 +1464,67 @@ class DualProcessModel:
         :param epsilon:
         :return:
         """
+        self.reset()
+
+        cfg = self._PARAM_MAP.get(self.model, {})
+        for attr, idx in cfg.items():
+            setattr(self, attr, params[idx])
+
+        trial = np.arange(1, len(reward) + 1)
+
+        self.model_initialization(reward, choice, trial, 0)
+
+        # slice data if necessary
+        s = slice(self.skip_first, None)
+        reward = reward[s]
+        choice = choice[s]
+        trial = trial[s]
+        choiceset = choiceset[s] if choiceset is not None else None
+
         return self.model_mapping[self.model](reward, choiceset, choice, trial)
 
-    def nll_fixed_init(self, params, reward, choice, choiceset=None):
-        self.reset()
+    def fixed_init(self, reward, choice, trial, trial_index=0):
+        # fixed initialization of the model does not need to do anything special
+        pass
 
-        cfg = self._PARAM_MAP.get(self.model, {})
-        for attr, idx in cfg.items():
-            setattr(self, attr, params[idx])
-
-        trial = np.arange(1, len(reward) + 1)
-
-        return self.nll(reward, choice, trial, choiceset)
-
-    def nll_first_trial_init(self, params, reward, choice, choiceset=None):
-        self.reset()
-
-        cfg = self._PARAM_MAP.get(self.model, {})
-        for attr, idx in cfg.items():
-            setattr(self, attr, params[idx])
-
-        trial = np.arange(1, len(reward) + 1)
-
+    def first_trial_init(self, reward, choice, trial, trial_index=0):
         # Initialize the model on the first trial
-        self.update(choice[0], reward[0], trial[0])
+        self.update(choice[trial_index], reward[trial_index], trial[trial_index])
 
         # Populate the EVs for the first trial
-        Gau_EV_trial1 = self.EV_Gau[choice[0]]
-        Dir_EV_trial1 = self.EV_Dir[choice[0]]
+        Gau_EV_trial1 = self.EV_Gau[choice[trial_index]]
+        M2_trial1 = self.M2[choice[trial_index]]
+        var_trial1 = self.var[choice[trial_index]]
 
         self.EV_Gau = np.full(self.num_options, Gau_EV_trial1)
-        self.EV_Dir = np.full(self.num_options, Dir_EV_trial1)
         self.AV = np.full(self.num_options, Gau_EV_trial1)
+        self.var = np.full(self.num_options, var_trial1)
+        self.M2 = np.full(self.num_options, M2_trial1)
 
-        return self.nll(reward[1:], choice[1:], trial[1:], choiceset[1:] if choiceset is not None else None)
+        self.alpha = np.full(self.num_options, 1.0)  # Reinitialize alpha uniformly
+        self.EV_Dir = np.full(self.num_options, 1 / self.num_options)  # Reinitialize Dirichlet EVs uniformly
 
-    def nll_first_trial_no_alpha_init(self, params, reward, choice, choiceset=None):
-        self.reset()
-
-        cfg = self._PARAM_MAP.get(self.model, {})
-        for attr, idx in cfg.items():
-            setattr(self, attr, params[idx])
-
-        trial = np.arange(1, len(reward) + 1)
-
+    def first_trial_no_alpha_init(self, reward, choice, trial, trial_index=0):
         # Temporarily force alpha=1 so that update adds full PE
         orig_a = self.a
         self.a = 1.0
 
         # Initialize the model on the first trial
-        self.update(choice[0], reward[0], trial[0])
+        self.update(choice[trial_index], reward[trial_index], trial[trial_index])
 
         # Restore the original alpha value
         self.a = orig_a
 
         # Populate the EVs for the first trial
-        Gau_EV_trial1 = self.EV_Gau[choice[0]]
-        Dir_EV_trial1 = self.EV_Dir[choice[0]]
+        Gau_EV_trial1 = self.EV_Gau[choice[trial_index]]
 
         self.EV_Gau = np.full(self.num_options, Gau_EV_trial1)
+        self.AV = np.full(self.num_options, Gau_EV_trial1)
+        self.var = np.full(self.num_options, 1 / 12)
+        self.M2 = np.full(self.num_options, 0.0)
+
         self.alpha = np.full(self.num_options, 1.0)  # Reinitialize alpha uniformly
         self.EV_Dir = np.full(self.num_options, 1 / self.num_options)  # Reinitialize Dirichlet EVs uniformly
-        self.AV = np.full(self.num_options, Gau_EV_trial1)
-
-        return self.nll(reward[1:], choice[1:], trial[1:], choiceset[1:] if choiceset is not None else None)
 
     def fit(self, data, model='Dual_Process', num_training_trials=150, num_exp_restart=9999, num_iterations=100,
             arbi_option='Entropy', Gau_fun='Naive_Recency', Dir_fun='Linear_Recency', weight_Gau='softmax',
@@ -1587,11 +1539,12 @@ class DualProcessModel:
         self.arbitration_function = self.arbitration_mapping[arbi_option]
 
         if initial_mode == 'fixed':
-            self.negative_log_likelihood = self.nll_fixed_init
+            self.model_initialization = self.fixed_init
         elif initial_mode == 'first_trial':
-            self.negative_log_likelihood = self.nll_first_trial_init
+            self.model_initialization = self.first_trial_init
         elif initial_mode == 'first_trial_no_alpha':
-            self.negative_log_likelihood = self.nll_first_trial_no_alpha_init
+            self.model_initialization = self.first_trial_no_alpha_init
+        self.skip_first = 0 if initial_mode == 'fixed' else 1
 
         # Assign the methods based on the provided strings
         self.action_selection_Dir = self.selection_mapping_Dir.get(weight_Dir)

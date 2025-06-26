@@ -118,7 +118,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             best_nll = result.fun
             best_initial_guess = initial_guess
             best_parameters = result.x
-            best_EV = model.EVs.copy()
+            best_EV = model.final_EVs.copy()
 
     aic = 2 * k + 2 * best_nll
     bic = k * np.log(total_n) + 2 * best_nll
@@ -152,7 +152,9 @@ class ComputationalModels:
         - num_params: Number of parameters for the model.
         """
 
-        self.negative_log_likelihood = None
+        self.skip_first = None
+        self.final_EVs = None
+        self.model_initialization = None
         self.num_options = 4 # This is only a placeholder, it will be set in the fit method
         self.num_training_trials = None
         self.num_exp_restart = None
@@ -168,6 +170,7 @@ class ComputationalModels:
         self.AllProbs = []
         self.PE = []
         self.iteration = 0
+        self.epsilon = 1e-12
 
         # define for each model_type a dict of { attr_name: param_index }
         self._PARAM_MAP = {
@@ -839,7 +842,7 @@ class ComputationalModels:
     # Now we define the negative log likelihood function for the ACT-R model because it requires updating EVs before
     # calculating the likelihood
     # ==================================================================================================================
-    def ACTR_nll(self, reward, choice, trial, epsilon, choiceset=None):
+    def ACTR_nll(self, reward, choice, trial, choiceset=None):
 
         nll = 0
 
@@ -847,6 +850,7 @@ class ComputationalModels:
 
             # if the trial is not a training trial, we skip the update
             if t % self.num_exp_restart > self.num_training_trials:
+                self.final_EVs = self.EVs.copy()
                 pass
             else:
                 # Otherwise, we update the model
@@ -858,34 +862,31 @@ class ComputationalModels:
                                                                           self.EVs[cs_mapped[1]]]))[0]
             prob_choice_alt = self.softmax_mapping[self.model_type](np.array([self.EVs[cs_mapped[1]],
                                                                               self.EVs[cs_mapped[0]]]))[0]
-            nll += -np.log(max(epsilon, prob_choice if ch == cs_mapped[0] else prob_choice_alt))
+            nll += -np.log(max(self.epsilon, prob_choice if ch == cs_mapped[0] else prob_choice_alt))
 
             if t % self.num_exp_restart == 0:
                 self.reset()
 
         return nll
 
-    def WSLS_nll(self, reward, choice, trial, epsilon, choiceset=None):
+    def WSLS_nll(self, reward, choice, trial, choiceset=None):
 
         nll = 0
 
         for r, cs, ch, t in zip(reward, choiceset, choice, trial):
             prob_choice = self.Probs[ch]
-            nll += -np.log(max(epsilon, prob_choice))
+            nll += -np.log(max(self.epsilon, prob_choice))
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
+                self.final_EVs = self.EVs.copy()
                 self.reset()
                 continue
 
             # if the current trial is the starting trial of the new experiment and if the initialization is set to 'first_trial',
             # we initialize the model with the first trial
-            if t % self.num_exp_restart == 1 and self.negative_log_likelihood == self.nll_first_trial_init:
-                self.update(ch, r, t, cs)
-
-                # Populate the EVs for the first trial
-                EV_new_exp = self.EVs[ch]
-                self.EVs = np.full(self.num_options, EV_new_exp)
-                self.AV = EV_new_exp
+            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+                self.model_initialization(reward, choice, trial, choiceset, t-2)
+                continue
 
             # if the trial is not a training trial, we skip the update
             if t % self.num_exp_restart > self.num_training_trials:
@@ -896,7 +897,7 @@ class ComputationalModels:
 
         return nll
 
-    def standard_nll(self, reward, choice, trial, epsilon, choiceset=None):
+    def standard_nll(self, reward, choice, trial, choiceset=None):
 
         nll = 0
 
@@ -906,25 +907,18 @@ class ComputationalModels:
                                                                           self.EVs[cs_mapped[1]]]))[0]
             prob_choice_alt = self.softmax_mapping[self.model_type](np.array([self.EVs[cs_mapped[1]],
                                                                               self.EVs[cs_mapped[0]]]))[0]
-            nll += -np.log(max(epsilon, prob_choice if ch == cs_mapped[0] else prob_choice_alt))
-
-            # print(f'Trial {t}, Choice: {ch}, Choiceset: {cs}, Reward: {r}, EVs: {self.EVs}, AV: {self.AV}, '
-            #       f'alpha: {self.a}')
+            nll += -np.log(max(self.epsilon, prob_choice if ch == cs_mapped[0] else prob_choice_alt))
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
+                self.final_EVs = self.EVs.copy()
                 self.reset()
                 continue
 
             # if the current trial is the starting trial of the new experiment and if the initialization is set to 'first_trial',
             # we initialize the model with the first trial
-            if t % self.num_exp_restart == 1 and self.negative_log_likelihood == self.nll_first_trial_init:
-                self.update(ch, r, t, cs)
-
-                # Populate the EVs for the first trial
-                EV_new_exp = self.EVs[ch]
-                self.EVs = np.full(self.num_options, EV_new_exp)
-                self.AV = EV_new_exp
+            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+                self.model_initialization(reward, choice, trial, choiceset, t-2)
                 continue
 
             # if the trial is not a training trial, we skip the update
@@ -936,28 +930,25 @@ class ComputationalModels:
 
         return nll
 
-    def igt_nll(self, reward, choice, trial, epsilon, choiceset=None):
+    def igt_nll(self, reward, choice, trial, choiceset=None):
 
         nll = 0
 
         for r, ch, t in zip(reward, choice, trial):
             prob_choice = self.softmax_mapping[self.model_type](np.array(self.EVs))[ch]
-            nll += -np.log(max(epsilon, prob_choice))
+            nll += -np.log(max(self.epsilon, prob_choice))
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
+                self.final_EVs = self.EVs.copy()
                 self.reset()
                 continue
 
             # if the current trial is the starting trial of the new experiment and if the initialization is set to 'first_trial',
             # we initialize the model with the first trial
-            if t % self.num_exp_restart == 1 and self.negative_log_likelihood == self.nll_first_trial_init:
-                self.update(ch, r, t)
-
-                # Populate the EVs for the first trial
-                EV_new_exp = self.EVs[ch]
-                self.EVs = np.full(self.num_options, EV_new_exp)
-                self.AV = EV_new_exp
+            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+                self.model_initialization(reward, choice, trial, choiceset, t-2)
+                continue
 
             # if the trial is not a training trial, we skip the update
             if t % self.num_exp_restart > self.num_training_trials:
@@ -968,7 +959,7 @@ class ComputationalModels:
 
         return nll
 
-    def nll(self, reward, choice, trial, choiceset=None, epsilon=1e-12):
+    def negative_log_likelihood(self, params, reward, choice, choiceset=None):
         """
         :param reward:
         :param choice:
@@ -977,9 +968,6 @@ class ComputationalModels:
         :param epsilon:
         :return:
         """
-        return self.nll_function(reward, choice, trial, epsilon, choiceset)
-
-    def nll_fixed_init(self, params, reward, choice, choiceset=None):
         self.reset()
 
         cfg = self._PARAM_MAP.get(self.model_type, {})
@@ -990,9 +978,22 @@ class ComputationalModels:
 
         self.b = getattr(self, self._B_OVERRIDES.get(self.model_type, 'b'))
 
-        return self.nll(reward, choice, trial, choiceset)
+        self.model_initialization(reward, choice, trial, choiceset, 0)
 
-    def nll_first_trial_init(self, params, reward, choice, choiceset=None):
+        # slice data if necessary
+        s = slice(self.skip_first, None)
+        reward = reward[s]
+        choice = choice[s]
+        trial = trial[s]
+        choiceset = choiceset[s] if choiceset is not None else None
+
+        return self.nll_function(reward, choice, trial, choiceset)
+
+    def fixed_init(self, reward, choice, trial, choiceset=None, trial_index=0):
+        # fixed initialization of the model does not need to do anything special
+        pass
+
+    def first_trial_init(self, reward, choice, trial, choiceset=None, trial_index=0):
         """
         Compute the negative log likelihood for the given parameters and data, initializing the model on the first trial.
 
@@ -1002,28 +1003,15 @@ class ComputationalModels:
         - choiceset: List or array of available choicesets for each trial.
         - choice: List or array of chosen options for each trial.
         """
-        self.reset()
-
-        cfg = self._PARAM_MAP.get(self.model_type, {})
-        for attr, idx in cfg.items():
-            setattr(self, attr, params[idx])
-
-        self.b = getattr(self, self._B_OVERRIDES.get(self.model_type, 'b'))
-
-        epsilon = 1e-12
-        trial = np.arange(1, len(reward) + 1)
-
         # Initialize the model on the first trial
-        self.update(choice[0], reward[0], trial[0], choiceset[0] if choiceset is not None else None)
+        self.update(choice[trial_index], reward[trial_index], trial[trial_index], choiceset[trial_index] if choiceset is not None else None)
 
         # Populate the EVs for the first trial
-        EV_trial1 = self.EVs[choice[0]]
+        EV_trial1 = self.EVs[choice[trial_index]]
         self.EVs = np.full(self.num_options, EV_trial1)
         self.AV = EV_trial1
 
-        return self.nll(reward[1:], choice[1:], trial[1:], choiceset[1:] if choiceset is not None else None, epsilon)
-
-    def nll_first_trial_no_alpha_init(self, params, reward, choice, choiceset=None):
+    def first_trial_no_alpha_init(self, reward, choice, trial, choiceset=None, trial_index=0):
         """
         Compute the negative log likelihood for the given parameters and data, initializing the model on the first trial.
 
@@ -1033,36 +1021,21 @@ class ComputationalModels:
         - choiceset: List or array of available choicesets for each trial.
         - choice: List or array of chosen options for each trial.
         """
-        self.reset()
-
-        cfg = self._PARAM_MAP.get(self.model_type, {})
-        for attr, idx in cfg.items():
-            setattr(self, attr, params[idx])
-
-        self.b = getattr(self, self._B_OVERRIDES.get(self.model_type, 'b'))
-
-        epsilon = 1e-12
-        trial = np.arange(1, len(reward) + 1)
 
         # Temporarily force alpha=1 so that update adds full PE
         orig_a = self.a
         self.a = 1.0
 
         # Initialize the model on the first trial
-        self.update(choice[0], reward[0], trial[0], choiceset[0] if choiceset is not None else None)
+        self.update(choice[trial_index], reward[trial_index], trial[trial_index], choiceset[trial_index] if choiceset is not None else None)
 
         # Restore the original alpha value
         self.a = orig_a
 
         # Populate the EVs for the first trial
-        EV_trial1 = self.EVs[choice[0]]
+        EV_trial1 = self.EVs[choice[trial_index]]
         self.EVs = np.full(self.num_options, EV_trial1)
         self.AV = EV_trial1
-
-        # print(f'Trial 1, Choice: {choice[0]}, Choiceset: {choiceset[0] if choiceset is not None else None}, '
-        #       f'Reward: {reward[0]}, EVs: {self.EVs}, AV: {self.AV}, alpha: {self.a}')
-
-        return self.nll(reward[1:], choice[1:], trial[1:], choiceset[1:] if choiceset is not None else None, epsilon)
 
     def fit(self, data, num_training_trials=150, num_exp_restart=999, initial_EV=None, initial_mode='fixed',
             num_iterations=100, beta_lower=-1, beta_upper=1):
@@ -1073,11 +1046,12 @@ class ComputationalModels:
         self.initial_EV = np.array(initial_EV) if initial_EV is not None else [0.0, 0.0, 0.0, 0.0]
 
         if initial_mode == 'fixed':
-            self.negative_log_likelihood = self.nll_fixed_init
+            self.model_initialization = self.fixed_init
         elif initial_mode == 'first_trial':
-            self.negative_log_likelihood = self.nll_first_trial_init
+            self.model_initialization = self.first_trial_init
         elif initial_mode == 'first_trial_no_alpha':
-            self.negative_log_likelihood = self.nll_first_trial_no_alpha_init
+            self.model_initialization = self.first_trial_no_alpha_init
+        self.skip_first = 0 if initial_mode == 'fixed' else 1
 
         # Creating a list to hold the future results
         futures = []
