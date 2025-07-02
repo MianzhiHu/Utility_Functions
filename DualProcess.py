@@ -1551,11 +1551,6 @@ class DualProcessModel:
         self.alpha = np.full(self.num_options, 1.0)  # Reinitialize alpha uniformly
         self.EV_Dir = np.full(self.num_options, 1 / self.num_options)  # Reinitialize Dirichlet EVs uniformly
 
-        print(f'Trial: {trial[trial_index]}, Choice: {choice[trial_index]}, Reward: {reward[trial_index]}')
-        print(f'Dir_EV: {self.EV_Dir}')
-        print(f'Gau_EV: {self.EV_Gau}')
-        print(f'Alpha: {self.alpha}, Subj_Weight : {self.weight}, tau: {self.tau}')
-
     def fit(self, data, model='Dual_Process', num_training_trials=150, num_exp_restart=9999, num_iterations=100,
             arbi_option='Entropy', Gau_fun='Naive_Recency', Dir_fun='Linear_Recency', weight_Gau='softmax',
             weight_Dir='softmax', a_min=1e-32, initial_EV=None, initial_mode='fixed'):
