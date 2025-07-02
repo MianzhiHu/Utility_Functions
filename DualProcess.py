@@ -20,9 +20,6 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
 
     total_n = len(pdata['reward'])
 
-    # get the number of parameters for the model
-    k = model._PARAM_COUNT.get(model_type)
-
     model.iteration = 0
 
     best_nll = 100000
@@ -55,10 +52,8 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
             bounds = [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999)]
         elif model_type == 'Dual_Process_Sensitivity':
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999)]
-            bounds = [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999),
-                      (0.0001, 0.9999)]
+                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 3.9999)]
+            bounds = [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 3.9999)]
 
         if task == 'ABCD':
             result = minimize(model.negative_log_likelihood, initial_guess,
@@ -87,6 +82,7 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
             best_process_chosen = model.process_chosen
             best_weight = model.weight_history
 
+    k = len(best_parameters)  # Number of parameters in the model
     aic = 2 * k + 2 * best_nll
     bic = k * np.log(total_n) + 2 * best_nll
 
@@ -182,39 +178,15 @@ class DualProcessModel:
             'Dual_Weight_DisEntropy': {'t': 0, 'a': 1},
             'Dual_Process': {'t': 0, 'a': 1, 'weight': 2},
             'Dual_Process_t2': {'t': 0, 'a': 1, 'weight': 2, 't2': 3},
-            'Dual_Process_Sensitivity': {'t': 0, 'a': 1, 'weight': 2, 'tau_gau': 3, 'tau_dir': 4}
+            'Dual_Process_Sensitivity': {'t': 0, 'a': 1, 'weight': 2, 'tau': 3}
         }
 
         # any attributes you always want to have, even if None
-        self._DEFAULT_ATTRS = ['t', 't2', 'a', 'tau_gau', 'tau_dir', 'weight']
+        self._DEFAULT_ATTRS = ['t', 't2', 'a', 'tau_gau', 'tau_dir', 'tau', 'weight']
 
         # initialize all attributes to None
         for attr in self._DEFAULT_ATTRS:
             setattr(self, attr, None)
-
-        self._PARAM_COUNT = {
-            **dict.fromkeys(
-                ['Dual_Binary'],
-                 1
-                 ),
-            **dict.fromkeys(
-                ('Dir', 'Gau', 'Dual_Binary_Recency', 'Dual_Binary_DisEntropy', 'Dual_Weight_ChoiceEntropy',
-                 'Dual_Weight_DisEntropy'),
-                2
-            ),
-            **dict.fromkeys(
-                ('Dual_Weight', 'Dual_Process'),
-                3
-            ),
-            **dict.fromkeys(
-                ['Dual_Process_t2'],
-                4
-            ),
-            **dict.fromkeys(
-                ['Dual_Process_Sensitivity'],
-                5
-            )
-        }
 
         # Define the mapping between model parameters and input features
         self.choiceset_mapping = [
@@ -249,6 +221,7 @@ class DualProcessModel:
             'Dual_Weight_DisEntropy': self.dual_weight_dis_entropy_nll,
             'Dual_Process': self.dual_process_nll,
             'Dual_Process_t2': self.dual_process_nll,
+            'Dual_Process_Sensitivity': self.dual_process_sensitivity_nll
         }
 
         self.IGT_SGT_model_mapping = {
@@ -416,7 +389,7 @@ class DualProcessModel:
         min_r = np.nanmin(all_rewards)
         max_r = np.nanmax(all_rewards)
         reward_range = max_r - min_r
-        fallback = np.array(0.5, dtype=float) # for the first trial where no range is available, assume a reference value of 0.5
+        fallback = np.array(self.initial_EV.copy(), dtype=float) # for the first trial where no range is available, assume a reference value of initial_EV
 
         reward_normalized = np.divide(reward - min_r, reward_range, out=fallback, where=(reward_range != 0))
 
@@ -1360,6 +1333,58 @@ class DualProcessModel:
 
         return nll
 
+    def dual_process_sensitivity_nll(self, reward, choiceset, choice, trial):
+
+        nll = 0
+
+        self.weight_history = []
+        self.obj_weight_history = []
+
+        for r, cs, ch, t in zip(reward, choiceset, choice, trial):
+            cs_mapped = self.choiceset_mapping[0][cs]
+
+            trial_av = [self.AV[cs_mapped[0]], self.AV[cs_mapped[1]]]
+            trial_var = [self.var[cs_mapped[0]], self.var[cs_mapped[1]]]
+            trial_cov = np.diag(trial_var)
+
+            gau_entropy = 2 ** (multivariate_normal.entropy(trial_av, trial_cov) * self.tau)
+
+            trial_alphas = [self.alpha[cs_mapped[0]], self.alpha[cs_mapped[1]]]
+            dir_entropy = 2 ** (dirichlet.entropy(trial_alphas))
+
+            obj_weight = gau_entropy / (dir_entropy + gau_entropy)
+            weight_dir = (self.weight * obj_weight) / (self.weight * obj_weight + (1 - self.weight) * (1 - obj_weight))
+
+            self.obj_weight_history.append(obj_weight)
+            self.weight_history.append(weight_dir)
+
+            dir_prob = self.action_selection_Dir(np.array([self.EV_Dir[cs_mapped[0]], self.EV_Dir[cs_mapped[1]]]), self.t)[0]
+            gau_prob = self.action_selection_Gau(np.array([self.EV_Gau[cs_mapped[0]], self.EV_Gau[cs_mapped[1]]]), self.t)[0]
+
+            prob_choice = EV_calculation(dir_prob, gau_prob, weight_dir)
+
+            nll += -np.log(max(self.epsilon, prob_choice) if ch == cs_mapped[0] else max(self.epsilon, 1 - prob_choice))
+
+            # if the experiment is restarted, we reset the model
+            if t % self.num_exp_restart == 0:
+                self.final_Gau_EVs = self.EV_Gau.copy()
+                self.final_Dir_EVs = self.EV_Dir.copy()
+                self.reset()
+                continue
+
+            # if the trial the starting trial of a new experiment, we initialize the model
+            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+                self.model_initialization(reward, choice, trial, t-2)
+                continue
+
+            # if the trial is not a training trial, we skip the update
+            if t % self.num_exp_restart > self.num_training_trials:
+                continue
+
+            self.update(ch, r, t)
+
+        return nll
+
     def dual_process_igt_sgt_nll(self, reward, choiceset, choice, trial):
 
         nll = 0
@@ -1525,6 +1550,11 @@ class DualProcessModel:
 
         self.alpha = np.full(self.num_options, 1.0)  # Reinitialize alpha uniformly
         self.EV_Dir = np.full(self.num_options, 1 / self.num_options)  # Reinitialize Dirichlet EVs uniformly
+
+        print(f'Trial: {trial[trial_index]}, Choice: {choice[trial_index]}, Reward: {reward[trial_index]}')
+        print(f'Dir_EV: {self.EV_Dir}')
+        print(f'Gau_EV: {self.EV_Gau}')
+        print(f'Alpha: {self.alpha}, Subj_Weight : {self.weight}, tau: {self.tau}')
 
     def fit(self, data, model='Dual_Process', num_training_trials=150, num_exp_restart=9999, num_iterations=100,
             arbi_option='Entropy', Gau_fun='Naive_Recency', Dir_fun='Linear_Recency', weight_Gau='softmax',
