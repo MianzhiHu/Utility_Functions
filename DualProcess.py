@@ -389,10 +389,9 @@ class DualProcessModel:
         min_r = np.nanmin(all_rewards)
         max_r = np.nanmax(all_rewards)
         reward_range = max_r - min_r
-        fallback = np.array(self.initial_EV.copy(), dtype=float) # for the first trial where no range is available, assume a reference value of initial_EV
+        fallback = np.array(np.mean(self.initial_EV.copy()), dtype=float) # for the first trial where no range is available, assume a reference value of initial_EV
 
         reward_normalized = np.divide(reward - min_r, reward_range, out=fallback, where=(reward_range != 0))
-
         delta = self.a * (reward_normalized - prior_mean)
         self.AV[chosen] += delta
         self.M2[chosen] += delta * (reward_normalized - self.AV[chosen])
