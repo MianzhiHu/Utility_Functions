@@ -37,9 +37,6 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
 
     total_n = len(pdata['reward'])
 
-    # get the number of parameters for the model
-    k = model._PARAM_COUNT.get(model_type)
-
     model.iteration = 0
     best_nll = 100000  # Initialize best negative log likelihood to a large number
     best_initial_guess = None
@@ -121,6 +118,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             best_parameters = result.x
             best_EV = model.final_EVs.copy()
 
+    k = len(best_parameters)  # Number of parameters
     aic = 2 * k + 2 * best_nll
     bic = k * np.log(total_n) + 2 * best_nll
 
@@ -222,30 +220,6 @@ class ComputationalModels:
         # initialize all attributes to None
         for attr in self._DEFAULT_ATTRS:
             setattr(self, attr, None)
-
-        self._PARAM_COUNT = {
-            **dict.fromkeys(
-                ('decay', 'delta', 'decay_choice', 'decay_win', 'WSLS'),
-                2
-            ),
-            **dict.fromkeys(
-                ('delta_asymmetric', 'decay_fre', 'ACTR', 'ACTR_Ori', 'WSLS_delta', 'mean_var_utility'),
-                3
-            ),
-            **dict.fromkeys(
-                ('delta_PVL', 'delta_PVL_relative', 'delta_PVL_relative_RR', 'decay_PVL', 'decay_PVL_relative',
-                 'decay_PVL_relative_RR', 'decay_PVPE'),
-                4
-            ),
-            **dict.fromkeys(
-                ('WSLS_delta_weight', 'WSLS_decay_weight'),
-                5
-            ),
-            **dict.fromkeys(
-                ('sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV', 'delta_decay'),
-                None  # will use model.num_params instead
-            ),
-        }
 
         self.EVs = None
         self.Probs = None
