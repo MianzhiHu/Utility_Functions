@@ -618,8 +618,10 @@ class VisualSearchModels:
         self.EVs = [-x for x in self.RTs]
 
     def RT_decay(self, chosen, reward, rt, trial):
-        self.RTs = [x * (self.a - 1) for x in self.RTs]
-        self.RTs[chosen] -= rt
+        # force RTs to be negative
+        self.RTs = [-np.abs(x) for x in self.RTs]
+        self.RTs = [x * (1 - self.a) for x in self.RTs]
+        self.RTs[chosen] -= (1 / rt)
         self.EVs = [-x for x in self.RTs]
 
     def RT_decay_PVL(self, chosen, reward, rt, trial):
@@ -863,8 +865,12 @@ class VisualSearchModels:
 
         # set the initial RTs
         if self.RT_initial is not None:
-            self.RTs = np.full(self.num_options, self.RT_initial)
-            self.RT_AV = self.RT_initial
+            if self.model_type == 'RT_decay':
+                self.RTs = np.full(self.num_options, (1 / self.RT_initial))
+                self.RT_AV = (1 / self.RT_initial)
+            else:
+                self.RTs = np.full(self.num_options, self.RT_initial)
+                self.RT_AV = self.RT_initial
 
         self.b = getattr(self, self._B_OVERRIDES.get(self.model_type, 'b'))
 
