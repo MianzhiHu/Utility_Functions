@@ -800,8 +800,6 @@ class VisualSearchModels:
             prob_choice = self.softmax(np.array(self.EVs))[ch]
             nll += -np.log(max(self.epsilon, prob_choice))
 
-            print(f"Trial {t}: Choice {ch}, Reward {r}, RT {rt}, EVs {self.EVs}, RTs {self.RTs}, RT_AV {self.RT_AV}, alpha {self.a}, Prob: {prob_choice}")
-
             # Otherwise, we update the model
             self.update(ch, r, rt, t)
 
@@ -1219,7 +1217,27 @@ class VisualSearchModels:
 # ======================================================================================================================
 # Assistant functions for the VisualSearchModels class
 # ======================================================================================================================
-def create_model_summary_df(model_results, criteria='BIC'):
+def behavioral_moving_window(data, window_size=10, exclusionary_criteria=None):
+    mv_results = []
+
+    for _, participant_data in data.groupby('SubNo'):
+        for i in range(len(participant_data) - window_size + 1):
+            window = participant_data.iloc[i:i + window_size]
+            window = exclusionary_criteria(window)
+            optimal_percent = np.mean(window['Optimal_Choice'])
+            mv_results.append({
+                'participant_id': participant_data['SubNo'].iloc[0],
+                'window_id': i + 1,
+                'optimal_percentage': optimal_percent,
+                'Group': participant_data['Group'].iloc[0]
+            })
+
+    optimal_window_df = pd.DataFrame(mv_results)
+    optimal_window_df['Group'] = optimal_window_df['Group'].map(
+        {1: 'High-Reward-Optimal', 2: 'Low-Reward-Optimal'})
+    return optimal_window_df
+
+def create_model_summary_df(model_results, criteria='BIC', return_best=False):
     # Find the best model for each participant and group based on BIC
     all_bics = pd.concat((df[['participant_id','Group',criteria]].assign(Model=name)
                           for name, df in model_results.items()), ignore_index=True)
@@ -1239,7 +1257,10 @@ def create_model_summary_df(model_results, criteria='BIC'):
     # Merge summary statistics with best counts
     result = (summary_stats.merge(best_counts, on=['Model','Group'], how='left').fillna({'N_Best_Fit': 0}).sort_values(['Model','Group']).reset_index(drop=True))
 
-    return result
+    if return_best:
+        return result, best
+    else:
+        return result
 
 
 def create_model_summary_table(model_results, output_path):
