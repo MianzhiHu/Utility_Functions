@@ -628,8 +628,9 @@ class VisualSearchModels:
         RT_diff = rt - self.RT_AV
         self.RT_AV += RT_diff / (trial + 1)
         utility = (self.lamda * np.abs(rt) ** self.b) * (RT_diff >= 0) + (np.abs(rt) ** self.b) * (RT_diff < 0)
-        self.RTs = [x * (self.a - 1) for x in self.RTs]
-        self.RTs[chosen] -= utility
+        self.RTs = [-np.abs(x) for x in self.RTs]
+        self.RTs = [x * (1 - self.a) for x in self.RTs]
+        self.RTs[chosen] -= (1 / utility)
         self.EVs = [-x for x in self.RTs]
 
     def RT_exp_delta(self, chosen, reward, rt, trial):
@@ -640,8 +641,9 @@ class VisualSearchModels:
 
     def RT_exp_decay(self, chosen, reward, rt, trial):
         pred = self.RTs[chosen] * np.exp(-1 * self.k)
-        prediction_error = pred - rt
-        self.RTs = [x * (self.a - 1) for x in self.RTs]
+        prediction_error = rt - pred
+        self.RTs = [-np.abs(x) for x in self.RTs]
+        self.RTs = [x * (1 - self.a) for x in self.RTs]
         self.RTs[chosen] -= prediction_error
         self.EVs = [-x for x in self.RTs]
 
