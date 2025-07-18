@@ -45,7 +45,7 @@ if __name__ == "__main__":
 
     # Load the model
     # model = VisualSearchModels(model_type='delta', task='VS', initial_EV=[0, 0], initial_mode='first_trial')
-    model = VisualSearchModels(model_type='RT_decay', task='VS')
+    model = VisualSearchModels(model_type='hybrid_decay_decay_3', task='VS')
     result = model.fit(testing_data, initial_EV=[0, 0], initial_RT=[0, 0], initial_mode='fixed', num_iterations=1)
 
     # # ==================================================================================================================

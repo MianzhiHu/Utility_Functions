@@ -102,10 +102,6 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.3000, 23.9999), np.random.uniform(0.0, 0.01)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.3000, 23.9999), (0.0, 0.01))
-        elif model_type in ('RT_exp_decay'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 4.9999),
-                             np.random.uniform(0.3000, 23.9999), np.random.uniform(0.0, 0.01)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.3000, 23.9999), (0.0, 0.01))
         elif model_type in ('RT_delta_PVL'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.3000, 23.9999), np.random.uniform(0.0001, 0.9999),
@@ -116,11 +112,11 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
                              np.random.uniform(0.3000, 23.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 4.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.3000, 23.9999), (0.0001, 0.9999), (0.0001, 4.9999))
-        elif model_type in ('hybrid_delta_delta', 'hybrid_decay_delta'):
+        elif model_type in ('hybrid_delta_delta', 'hybrid_decay_delta', 'hybrid_decay_decay'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.3000, 23.9999), np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.3000, 23.9999), (0.0001, 0.9999))
-        elif model_type in ('hybrid_delta_delta_3', 'hybrid_decay_delta_3'):
+        elif model_type in ('hybrid_delta_delta_3', 'hybrid_decay_delta_3', 'hybrid_decay_decay_3'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999), np.random.uniform(0.3000, 23.9999),
                              np.random.uniform(0.0001, 0.9999)]
@@ -226,13 +222,13 @@ class VisualSearchModels:
             'RT_delta': {'t': 0, 'a': 1, 'RT_initial': 2},
             'RT_decay': {'t': 0, 'a': 1, 'RT_initial': 2},
             'RT_exp_delta': {'t': 0, 'a': 1, 'RT_initial': 2, 'k': 3},
-            'RT_exp_decay': {'t': 0, 'a': 1, 'RT_initial': 2, 'k': 3},
             'RT_delta_PVL': {'t': 0, 'a': 1, 'RT_initial': 2, 'b': 3, 'lamda': 4},
-            'RT_decay_PVL': {'t': 0, 'a': 1, 'RT_initial': 2, 'b': 3, 'lamda': 4},
             'hybrid_delta_delta': {'t': 0, 'a': 1, 'RT_initial': 2, 'w': 3},
             'hybrid_delta_delta_3': {'t': 0, 'a': 1, 'b': 2, 'RT_initial': 3, 'w': 4},
             'hybrid_decay_delta': {'t': 0, 'a': 1, 'RT_initial': 2, 'w': 3},
             'hybrid_decay_delta_3': {'t': 0, 'a': 1, 'b': 2, 'RT_initial': 3, 'w': 4},
+            'hybrid_decay_decay': {'t': 0, 'a': 1, 'RT_initial': 2, 'w': 3},
+            'hybrid_decay_decay_3': {'t': 0, 'a': 1, 'b': 2, 'RT_initial': 3, 'w': 4},
             'hybrid_WSLS_delta': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'RT_initial': 4, 'w': 5},
         }
 
@@ -247,7 +243,8 @@ class VisualSearchModels:
         self._B_OVERRIDES = {
             'hybrid_delta_delta': 'a',
             'hybrid_decay_delta': 'a',
-            'hybrid_WSLS_delta': 'a'
+            'hybrid_WSLS_delta': 'a',
+            'hybrid_decay_decay': 'a',
         }
 
         # initialize all attributes to None
@@ -293,7 +290,6 @@ class VisualSearchModels:
             'RT_delta': self.RT_delta,
             'RT_decay': self.RT_decay,
             'RT_exp_delta': self.RT_exp_delta,
-            'RT_exp_decay': self.RT_exp_decay,
             'RT_delta_PVL': self.RT_delta_PVL,
             'RT_decay_PVL': self.RT_decay_PVL,
             'hybrid_delta_delta': self.hybrid_delta_delta,
@@ -301,6 +297,8 @@ class VisualSearchModels:
             'hybrid_decay_delta': self.hybrid_decay_delta,
             'hybrid_decay_delta_3': self.hybrid_decay_delta,
             'hybrid_WSLS_delta': self.hybrid_WSLS_delta,
+            'hybrid_decay_decay': self.hybrid_decay_decay,
+            'hybrid_decay_decay_3': self.hybrid_decay_decay,
         }
 
         self.updating_function = self.updating_mapping[self.model_type]
@@ -332,7 +330,6 @@ class VisualSearchModels:
             'RT_delta': self.standard_nll,
             'RT_decay': self.standard_nll,
             'RT_exp_delta': self.standard_nll,
-            'RT_exp_decay': self.standard_nll,
             'RT_delta_PVL': self.standard_nll,
             'RT_decay_PVL': self.standard_nll,
             'hybrid_delta_delta': self.hybrid_nll,
@@ -340,6 +337,8 @@ class VisualSearchModels:
             'hybrid_decay_delta': self.hybrid_nll,
             'hybrid_decay_delta_3': self.hybrid_nll,
             'hybrid_WSLS_delta': self.hybrid_WSLS_nll,
+            'hybrid_decay_decay': self.hybrid_nll,
+            'hybrid_decay_decay_3': self.hybrid_nll,
         }
 
         self.nll_function = self.nll_mapping_VS[self.model_type]
@@ -611,8 +610,8 @@ class VisualSearchModels:
 
     def RT_delta_PVL(self, chosen, reward, rt, trial):
         RT_diff = rt - self.RT_AV
-        self.RT_AV += self.a * RT_diff
-        utility = (self.lamda * np.abs(RT_diff) ** self.b) * (RT_diff >= 0) + (-1 * np.abs(RT_diff) ** self.b) * (RT_diff < 0)
+        self.RT_AV += RT_diff / (trial + 1)
+        utility = (self.lamda * np.abs(RT_diff) ** self.b) * (RT_diff > 0) + (-1 * np.abs(RT_diff) ** self.b) * (RT_diff <= 0)
         prediction_error = utility - self.RTs[chosen]
         self.RTs[chosen] += self.a * prediction_error
         self.EVs = [-x for x in self.RTs]
@@ -627,7 +626,7 @@ class VisualSearchModels:
     def RT_decay_PVL(self, chosen, reward, rt, trial):
         RT_diff = rt - self.RT_AV
         self.RT_AV += RT_diff / (trial + 1)
-        utility = (self.lamda * np.abs(rt) ** self.b) * (RT_diff >= 0) + (np.abs(rt) ** self.b) * (RT_diff < 0)
+        utility = (self.lamda * np.abs(rt) ** self.b) * (RT_diff > 0) + (np.abs(rt) ** self.b) * (RT_diff <= 0)
         self.RTs = [-np.abs(x) for x in self.RTs]
         self.RTs = [x * (1 - self.a) for x in self.RTs]
         self.RTs[chosen] -= (1 / utility)
@@ -636,15 +635,7 @@ class VisualSearchModels:
     def RT_exp_delta(self, chosen, reward, rt, trial):
         pred = self.RTs[chosen] * np.exp(-1 * self.k)
         prediction_error = rt - pred
-        self.RTs[chosen] += self.a * prediction_error
-        self.EVs = [-x for x in self.RTs]
-
-    def RT_exp_decay(self, chosen, reward, rt, trial):
-        pred = self.RTs[chosen] * np.exp(-1 * self.k)
-        prediction_error = rt - pred
-        self.RTs = [-np.abs(x) for x in self.RTs]
-        self.RTs = [x * (1 - self.a) for x in self.RTs]
-        self.RTs[chosen] -= prediction_error
+        self.RTs[chosen] = pred + self.a * prediction_error
         self.EVs = [-x for x in self.RTs]
 
     # ------------------------------------------------------------------------------------------------------------------
@@ -657,6 +648,16 @@ class VisualSearchModels:
 
         # RT update
         self.RTs[chosen] += self.b * (rt - self.RTs[chosen])
+
+    def hybrid_decay_decay(self, chosen, reward, rt, trial):
+        # Reward update
+        self.EVs = self.EVs * (1 - self.a)
+        self.EVs[chosen] += reward
+
+        # RT update
+        self.RTs = [-np.abs(x) for x in self.RTs]
+        self.RTs = [x * (1 - self.a) for x in self.RTs]
+        self.RTs[chosen] -= (1 / rt)
 
     def hybrid_decay_delta(self, chosen, reward, rt, trial):
         # Reward update
@@ -867,9 +868,13 @@ class VisualSearchModels:
 
         # set the initial RTs
         if self.RT_initial is not None:
-            if self.model_type == 'RT_decay':
+            if self.model_type in ('RT_decay', 'RT_decay_decay', 'RT_decay_decay_3'):
                 self.RTs = np.full(self.num_options, (1 / self.RT_initial))
-                self.RT_AV = (1 / self.RT_initial)
+                self.RT_AV = self.RT_initial
+            elif self.model_type in ('RT_decay_PVL'):
+                prior_utility = 1 / (np.abs(self.RT_initial) ** self.b)
+                self.RTs = np.full(self.num_options, prior_utility)
+                self.RT_AV = self.RT_initial
             else:
                 self.RTs = np.full(self.num_options, self.RT_initial)
                 self.RT_AV = self.RT_initial
