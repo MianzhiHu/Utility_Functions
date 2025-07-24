@@ -7,7 +7,7 @@ import numpy as np
 
 def preprocess_data(main_folder_directory, behavioral_list, other_data_list,
                     numeric_list, dict_list, baseline_pos=0, compare_pos=11, compare_condition='Frequency',
-                    estimate=False, cutoff=2):
+                    estimate=False, cutoff=9999):
     """
     This function preprocesses data from JATOS and returns a DataFrame with the relevant columns.
     :param main_folder_directory: str, the path to the main folder containing the data
@@ -171,11 +171,15 @@ def preprocess_data(main_folder_directory, behavioral_list, other_data_list,
         return all_data_combined
 
     if estimate:
-        confidence_lists = ['Subnum', 'OptionOrder', 'EstOptionA', 'OptionAConfidence', 'EstOptionS',
-                            'OptionSConfidence',
-                            'EstOptionK', 'OptionKConfidence', 'EstOptionL', 'OptionLConfidence']
+        confidence_lists = ['Subnum', 'Condition', 'OptionOrder', 'EstOptionA', 'OptionAConfidence', 'EstOptionS',
+                            'OptionSConfidence', 'EstOptionK', 'OptionKConfidence', 'EstOptionL', 'OptionLConfidence']
 
-        confidence_data = all_data_combined[confidence_lists].groupby('Subnum').first().reset_index()
+        confidence_data = (
+            all_data_combined[confidence_lists]
+            .groupby(['Subnum', 'Condition'])
+            .first()
+            .reset_index()
+        )
 
         # Mapping of old columns to their positions (1-based for readability)
         options_to_pos = {'EstOptionA': 1, 'EstOptionS': 2, 'EstOptionK': 3, 'EstOptionL': 4}
@@ -187,15 +191,15 @@ def preprocess_data(main_folder_directory, behavioral_list, other_data_list,
         new_confidence_cols = ['A_Confidence', 'B_Confidence', 'C_Confidence', 'D_Confidence']
 
         # Apply the function to reorder and rename columns for each row
-        reordered_df = confidence_data.apply(reorder_and_rename, axis=1)
-        reordered_df.insert(0, 'Subnum', confidence_data['Subnum'])
+        reordered_values = confidence_data.apply(reorder_and_rename, axis=1)
+        reordered_df = pd.concat([confidence_data[['Subnum', 'Condition']].reset_index(drop=True), reordered_values],axis=1)
 
         # explode the data
         columns_to_explode = new_option_cols + new_confidence_cols
         knowledge_df = reordered_df.explode(columns_to_explode)
 
         # add a column to indicate phase from 1 to 7
-        knowledge_df['Phase'] = np.tile(np.arange(1, 8), len(knowledge_df) // 7)
+        knowledge_df['Phase'] = knowledge_df.groupby(['Subnum', 'Condition']).cumcount() + 1
 
         # clear nonsense data
         knowledge_df[new_option_cols] = knowledge_df[new_option_cols].apply(confidence_data_preprocessing)

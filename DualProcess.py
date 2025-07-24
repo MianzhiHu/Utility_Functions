@@ -93,10 +93,11 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
         'EV_Gau': best_EV_Gau,
         'EV_Dir': best_EV_Dir,
         'EV': best_EV,
-        'best_process_chosen': best_process_chosen if model_type in ('Dual', 'Recency', 'Dual_Dis') else None,
-        'best_weight': best_weight if model_type in ('Entropy', 'Entropy_Recency', 'Entropy_Dis', 'Entropy_Dis_ID'
-                                                     ) else None,
-        'best_obj_weight': best_obj_weight if model_type in ('Entropy_Dis', 'Entropy_Dis_ID') else None,
+        'best_process_chosen': best_process_chosen if model_type in ('Dual_Binary_Recency', 'Dual_Binary_DisEntropy') else None,
+        'best_weight': best_weight if model_type in ('Dual_Process', 'Dual_Weight', 'Dual_Process_t2',
+                                                     'Dual_Process_Sensitivity') else None,
+        'best_obj_weight': best_obj_weight if model_type in ('Dual_Process', 'Dual_Weight', 'Dual_Process_t2',
+                                                     'Dual_Process_Sensitivity') else None,
         'best_nll': best_nll,
         'AIC': aic,
         'BIC': bic

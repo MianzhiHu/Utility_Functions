@@ -254,14 +254,14 @@ def pdf_plot_generator(raw_data, result_df, save_path, modality="bimodal", bins=
 
     if modality == 'trimodal':
         # Calculate the Gaussian distributions
-        pdf1 = norm.pdf(x, result_df['mu1'].mode().iloc[0], result_df['sd1'].mode().iloc[0])
-        pdf2 = norm.pdf(x, result_df['mu2'].mode().iloc[0], result_df['sd2'].mode().iloc[0])
-        pdf3 = norm.pdf(x, result_df['mu3'].mode().iloc[0], result_df['sd3'].mode().iloc[0])
+        pdf1 = norm.pdf(x, float(result_df['mu1'].mode().iloc[0]), float(result_df['sd1'].mode().iloc[0]))
+        pdf2 = norm.pdf(x, float(result_df['mu2'].mode().iloc[0]), float(result_df['sd2'].mode().iloc[0]))
+        pdf3 = norm.pdf(x, float(result_df['mu3'].mode().iloc[0]), float(result_df['sd3'].mode().iloc[0]))
 
         # Weight the pdfs by the mixing coefficients
-        ppi1 = result_df['ppi1'].mode().iloc[0]
-        ppi2 = result_df['ppi2'].mode().iloc[0]
-        ppi3 = result_df['ppi3'].mode().iloc[0]
+        ppi1 = float(result_df['ppi1'].mode().iloc[0])
+        ppi2 = float(result_df['ppi2'].mode().iloc[0])
+        ppi3 = float(result_df['ppi3'].mode().iloc[0])
 
         weighted_pdf1 = ppi1 * pdf1
         weighted_pdf2 = ppi2 * pdf2
@@ -269,22 +269,22 @@ def pdf_plot_generator(raw_data, result_df, save_path, modality="bimodal", bins=
 
         # Plot
         plt.plot(x, weighted_pdf3, '#E74C3C', linewidth=2,
-                 label=rf"Disadvantageous Learners: $\mu$={result_df['mu3'].mode().iloc[0]:.2f}, "
-                       rf"$\sigma$={result_df['sd3'].mode().iloc[0]:.2f}")
+                 label=rf"Disadvantageous Learners: $\mu$={float(result_df['mu3'].mode().iloc[0]):.2f}, "
+                       rf"$\sigma$={float(result_df['sd3'].mode().iloc[0]):.2f}")
         plt.plot(x, weighted_pdf2, '#F39C12', linewidth=2,
-                 label=rf"Average Learners: $\mu$={result_df['mu2'].mode().iloc[0]:.2f}, "
-                       rf"$\sigma$={result_df['sd2'].mode().iloc[0]:.2f}")
+                 label=rf"Average Learners: $\mu$={float(result_df['mu2'].mode().iloc[0]):.2f}, "
+                       rf"$\sigma$={float(result_df['sd2'].mode().iloc[0]):.2f}")
         plt.plot(x, weighted_pdf1, '#2ECC71', linewidth=2,
-                 label=rf"Advantageous Learners: $\mu$={result_df['mu1'].mode().iloc[0]:.2f}, "
-                       rf"$\sigma$={result_df['sd1'].mode().iloc[0]:.2f}")
+                 label=rf"Advantageous Learners: $\mu$={float(result_df['mu1'].mode().iloc[0]):.2f}, "
+                       rf"$\sigma$={float(result_df['sd1'].mode().iloc[0]):.2f}")
 
     else:
         # Calculate the Gaussian distributions
-        pdf1 = norm.pdf(x, result_df['mu1'].mode().iloc[0], result_df['sd1'].mode().iloc[0])
-        pdf2 = norm.pdf(x, result_df['mu2'].mode().iloc[0], result_df['sd2'].mode().iloc[0])
+        pdf1 = norm.pdf(x, float(result_df['mu1'].mode().iloc[0]), float(result_df['sd1'].mode().iloc[0]))
+        pdf2 = norm.pdf(x, float(result_df['mu2'].mode().iloc[0]), float(result_df['sd2'].mode().iloc[0]))
 
         # Weight the pdfs by the mixing coefficients
-        ppi = result_df['ppi'].mode().iloc[0]
+        ppi = float(result_df['ppi'].mode().iloc[0])
         weighted_pdf1 = (1 - ppi) * pdf1
         weighted_pdf2 = ppi * pdf2
 
@@ -321,16 +321,16 @@ def likelihood_ratio_test(result_df, df, result_df_null=None):
     # if we are comparing two the target model with a simple normal distribution
     if result_df_null is None:
         # get the log likelihood of the target model
-        ll = result_df['ll'].mode().iloc[0]
+        ll = float(result_df['ll'].mode().iloc[0])
 
-        ll_null = result_df['ll_null'].mode().iloc[0]
+        ll_null = float(result_df['ll_null'].mode().iloc[0])
 
     # if we are comparing two target models
     else:
         # get the log likelihood of the target model
-        ll = result_df['ll'].mode().iloc[0]
+        ll = float(result_df['ll'].mode().iloc[0])
 
-        ll_null = result_df_null['ll'].mode().iloc[0]
+        ll_null = float(result_df_null['ll'].mode().iloc[0])
 
     # calculate the likelihood ratio test
     lr = -2 * (ll_null - ll)
@@ -343,24 +343,24 @@ def likelihood_ratio_test(result_df, df, result_df_null=None):
 
 def parameter_extractor(df, modality='bimodal'):
     if modality == 'trimodal':
-        mu1 = df['mu1'].mode().iloc[0]
-        mu2 = df['mu2'].mode().iloc[0]
-        mu3 = df['mu3'].mode().iloc[0]
-        sd1 = df['sd1'].mode().iloc[0]
-        sd2 = df['sd2'].mode().iloc[0]
-        sd3 = df['sd3'].mode().iloc[0]
-        ppi1 = df['ppi1'].mode().iloc[0]
-        ppi2 = df['ppi2'].mode().iloc[0]
-        ppi3 = df['ppi3'].mode().iloc[0]
+        mu1 = float(df['mu1'].mode().iloc[0])
+        mu2 = float(df['mu2'].mode().iloc[0])
+        mu3 = float(df['mu3'].mode().iloc[0])
+        sd1 = float(df['sd1'].mode().iloc[0])
+        sd2 = float(df['sd2'].mode().iloc[0])
+        sd3 = float(df['sd3'].mode().iloc[0])
+        ppi1 = float(df['ppi1'].mode().iloc[0])
+        ppi2 = float(df['ppi2'].mode().iloc[0])
+        ppi3 = float(df['ppi3'].mode().iloc[0])
 
         return mu1, mu2, mu3, sd1, sd2, sd3, ppi1, ppi2, ppi3
 
     else:
-        mu1 = df['mu1'].mode().iloc[0]
-        mu2 = df['mu2'].mode().iloc[0]
-        sd1 = df['sd1'].mode().iloc[0]
-        sd2 = df['sd2'].mode().iloc[0]
-        ppi = df['ppi'].mode().iloc[0]
+        mu1 = float(df['mu1'].mode().iloc[0])
+        mu2 = float(df['mu2'].mode().iloc[0])
+        sd1 = float(df['sd1'].mode().iloc[0])
+        sd2 = float(df['sd2'].mode().iloc[0])
+        ppi = float(df['ppi'].mode().iloc[0])
 
         return mu1, mu2, sd1, sd2, ppi
 
@@ -376,11 +376,15 @@ def group_assignment(df, result_df, modality='bimodal'):
         prob2 = ppi2 * norm.pdf(df, mu2, sd2)
         prob3 = ppi3 * norm.pdf(df, mu3, sd3)
 
-        # assign participants to each group
-        assignments = np.argmax(np.vstack([prob1, prob2, prob3]), axis=0) + 1
-
         # combine the prob and assignments into a dataframe
-        prob_df = pd.DataFrame(np.vstack([prob1, prob2, prob3]).T, columns=['prob1', 'prob2', 'prob3'])
+        unnormalized = np.vstack([prob1, prob2, prob3])
+
+        # Normalize the probabilities
+        responsibilities = unnormalized / unnormalized.sum(axis=0, keepdims=True)
+
+        # assign participants to each group
+        assignments = np.argmax(responsibilities, axis=0) + 1
+        prob_df = pd.DataFrame(responsibilities.T, columns=['prob1', 'prob2', 'prob3'])
         prob_df['assignments'] = assignments
 
         return prob_df
