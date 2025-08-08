@@ -80,8 +80,8 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
                 bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999))
         elif model_type == 'decay_PVPE':
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999))
+                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999)]
+            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999))
         elif model_type == 'WSLS':
             initial_guess = [np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 0.9999), (0.0001, 0.9999))
@@ -1600,8 +1600,24 @@ def clean_list_string(s):
     return s
 
 
-def trial_exploder(data, col):
-    return data.apply(lambda x: safely_evaluate(x[col]), axis=1).explode().reset_index(drop=True)
+def trialwise_extractor(results, values=None):
+
+    pd.options.mode.chained_assignment = None
+
+    # Loop through each value in the list of values
+    for value in values:
+        # Apply safely_evaluate and explode the column
+        results[value] = results[value].apply(safely_evaluate)
+        trialwise_params = results.explode(value)
+        # Convert the column to numeric, coercing errors to NaN
+        trialwise_params[value] = pd.to_numeric(trialwise_params[value], errors='coerce')
+
+    # Reset the index of the DataFrame
+    trialwise_params.reset_index(drop=True, inplace=True)
+    # Return the modified DataFrame
+    return trialwise_params
+
+
 
 # ======================================================================================================================
 # Model Recovery & Parameter Recovery Functions

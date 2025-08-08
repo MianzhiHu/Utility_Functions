@@ -29,6 +29,8 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
     best_obj_weight = None
     best_EV_Gau = None
     best_EV_Dir = None
+    best_EV_Gau_history = None
+    best_EV_Dir_history = None
     best_EV = None
 
     for _ in range(num_iterations):
@@ -75,6 +77,8 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
                 best_EV_Gau = model.final_Gau_EVs
                 best_EV_Dir = model.final_Dir_EVs
                 best_EV = model.EVs
+                best_EV_Gau_history = model.EV_Gau_history
+                best_EV_Dir_history = model.EV_Dir_history
         elif isinstance(result, (float, np.float64)):
             best_nll = result
             best_initial_guess = initial_guess
@@ -98,6 +102,8 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
                                                      'Dual_Process_Sensitivity') else None,
         'best_obj_weight': best_obj_weight if model_type in ('Dual_Process', 'Dual_Weight', 'Dual_Process_t2',
                                                      'Dual_Process_Sensitivity') else None,
+        'EV_Gau_history': best_EV_Gau_history,
+        'EV_Dir_history': best_EV_Dir_history,
         'best_nll': best_nll,
         'AIC': aic,
         'BIC': bic
@@ -289,6 +295,22 @@ class DualProcessModel:
         self.process_chosen = []
         self.weight_history = []
         self.obj_weight_history = []
+        self.EV_Dir_history = []
+        self.EV_Gau_history = []
+
+    def restart_experiment(self):
+        def reset(self):
+            self.EV_Dir = np.full(self.num_options, 0.25)
+            self.EV_Gau = self.initial_EV.copy()
+            self.prior_mean = np.mean(self.initial_EV.copy())
+            self.prior_var = 1 / 12
+            self.AV = self.initial_EV.copy()
+            self.var = np.full(self.num_options, 1 / 12)
+            self.M2 = np.full(self.num_options, 0.0)
+            self.alpha = np.full(self.num_options, 1.0)
+            self.gamma_a = np.full(self.num_options, 0.5)
+            self.gamma_b = np.full(self.num_options, 0.0)
+            self.reward_history = [[] for _ in range(self.num_options)]
 
     def softmax(self, x, t):
         c = 3 ** t - 1
@@ -953,7 +975,7 @@ class DualProcessModel:
             if t % self.num_exp_restart == 0:
                 self.final_Gau_EVs = self.EV_Gau.copy()
                 self.final_Dir_EVs = self.EV_Dir.copy()
-                self.reset()
+                self.restart_experiment()
                 continue
 
             # if the trial the starting trial of a new experiment, we initialize the model
@@ -986,7 +1008,7 @@ class DualProcessModel:
             if t % self.num_exp_restart == 0:
                 self.final_Gau_EVs = self.EV_Gau.copy()
                 self.final_Dir_EVs = self.EV_Dir.copy()
-                self.reset()
+                self.restart_experiment()
                 continue
 
             # if the trial the starting trial of a new experiment, we initialize the model
@@ -1018,7 +1040,7 @@ class DualProcessModel:
             if t % self.num_exp_restart == 0:
                 self.final_Gau_EVs = self.EV_Gau.copy()
                 self.final_Dir_EVs = self.EV_Dir.copy()
-                self.reset()
+                self.restart_experiment()
                 continue
 
             # if the trial the starting trial of a new experiment, we initialize the model
@@ -1065,7 +1087,7 @@ class DualProcessModel:
             if t % self.num_exp_restart == 0:
                 self.final_Gau_EVs = self.EV_Gau.copy()
                 self.final_Dir_EVs = self.EV_Dir.copy()
-                self.reset()
+                self.restart_experiment()
                 continue
 
             # if the trial the starting trial of a new experiment, we initialize the model
@@ -1112,7 +1134,7 @@ class DualProcessModel:
             if t % self.num_exp_restart == 0:
                 self.final_Gau_EVs = self.EV_Gau.copy()
                 self.final_Dir_EVs = self.EV_Dir.copy()
-                self.reset()
+                self.restart_experiment()
                 continue
 
             # if the trial the starting trial of a new experiment, we initialize the model
@@ -1158,7 +1180,7 @@ class DualProcessModel:
             if t % self.num_exp_restart == 0:
                 self.final_Gau_EVs = self.EV_Gau.copy()
                 self.final_Dir_EVs = self.EV_Dir.copy()
-                self.reset()
+                self.restart_experiment()
                 continue
 
             # if the trial the starting trial of a new experiment, we initialize the model
@@ -1208,7 +1230,7 @@ class DualProcessModel:
             if t % self.num_exp_restart == 0:
                 self.final_Gau_EVs = self.EV_Gau.copy()
                 self.final_Dir_EVs = self.EV_Dir.copy()
-                self.reset()
+                self.restart_experiment()
                 continue
 
             # if the trial the starting trial of a new experiment, we initialize the model
@@ -1265,7 +1287,7 @@ class DualProcessModel:
             if t % self.num_exp_restart == 0:
                 self.final_Gau_EVs = self.EV_Gau.copy()
                 self.final_Dir_EVs = self.EV_Dir.copy()
-                self.reset()
+                self.restart_experiment()
                 continue
 
             # if the trial the starting trial of a new experiment, we initialize the model
@@ -1305,6 +1327,8 @@ class DualProcessModel:
 
             self.obj_weight_history.append(obj_weight)
             self.weight_history.append(weight_dir)
+            self.EV_Gau_history.append(self.EV_Gau.copy())
+            self.EV_Dir_history.append(self.EV_Dir.copy())
 
             dir_prob = self.action_selection_Dir(np.array([self.EV_Dir[cs_mapped[0]], self.EV_Dir[cs_mapped[1]]]), self.t)[0]
             gau_prob = self.action_selection_Gau(np.array([self.EV_Gau[cs_mapped[0]], self.EV_Gau[cs_mapped[1]]]), self.t)[0]
@@ -1317,7 +1341,7 @@ class DualProcessModel:
             if t % self.num_exp_restart == 0:
                 self.final_Gau_EVs = self.EV_Gau.copy()
                 self.final_Dir_EVs = self.EV_Dir.copy()
-                self.reset()
+                self.restart_experiment()
                 continue
 
             # if the trial the starting trial of a new experiment, we initialize the model
@@ -1361,6 +1385,9 @@ class DualProcessModel:
             dir_prob = self.action_selection_Dir(np.array([self.EV_Dir[cs_mapped[0]], self.EV_Dir[cs_mapped[1]]]), self.t)[0]
             gau_prob = self.action_selection_Gau(np.array([self.EV_Gau[cs_mapped[0]], self.EV_Gau[cs_mapped[1]]]), self.t)[0]
 
+            self.EV_Gau_history.append(gau_prob)
+            self.EV_Dir_history.append(dir_prob)
+
             prob_choice = EV_calculation(dir_prob, gau_prob, weight_dir)
 
             nll += -np.log(max(self.epsilon, prob_choice) if ch == cs_mapped[0] else max(self.epsilon, 1 - prob_choice))
@@ -1369,7 +1396,7 @@ class DualProcessModel:
             if t % self.num_exp_restart == 0:
                 self.final_Gau_EVs = self.EV_Gau.copy()
                 self.final_Dir_EVs = self.EV_Dir.copy()
-                self.reset()
+                self.restart_experiment()
                 continue
 
             # if the trial the starting trial of a new experiment, we initialize the model
@@ -1417,7 +1444,7 @@ class DualProcessModel:
             if t % self.num_exp_restart == 0:
                 self.final_Gau_EVs = self.EV_Gau.copy()
                 self.final_Dir_EVs = self.EV_Dir.copy()
-                self.reset()
+                self.restart_experiment()
                 continue
 
             if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
@@ -1456,6 +1483,9 @@ class DualProcessModel:
             dir_prob = self.action_selection_Dir(np.array(self.EV_Dir), self.t)[ch]
             gau_prob = self.action_selection_Gau(np.array(self.EV_Gau), self.t2)[ch]
 
+            self.EV_Gau_history.append(gau_prob)
+            self.EV_Dir_history.append(dir_prob)
+
             prob_choice = EV_calculation(dir_prob, gau_prob, weight_dir)
 
             nll += -np.log(max(self.epsilon, prob_choice))
@@ -1464,7 +1494,7 @@ class DualProcessModel:
             if t % self.num_exp_restart == 0:
                 self.final_Gau_EVs = self.EV_Gau.copy()
                 self.final_Dir_EVs = self.EV_Dir.copy()
-                self.reset()
+                self.restart_experiment()
                 continue
 
             if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
