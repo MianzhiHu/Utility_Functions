@@ -1230,14 +1230,14 @@ class VisualSearchModels:
 # ======================================================================================================================
 # Assistant functions for the VisualSearchModels class
 # ======================================================================================================================
-def behavioral_moving_window(data, window_size=10, exclusionary_criteria=None):
+def behavioral_moving_window(data, variable='Optimal_Choice', window_size=10, exclusionary_criteria=None):
     mv_results = []
 
     for _, participant_data in data.groupby('SubNo'):
         for i in range(len(participant_data) - window_size + 1):
             window = participant_data.iloc[i:i + window_size]
             window = exclusionary_criteria(window)
-            optimal_percent = np.mean(window['Optimal_Choice'])
+            optimal_percent = np.mean(window[variable])
             mv_results.append({
                 'participant_id': participant_data['SubNo'].iloc[0],
                 'window_id': i + 1,

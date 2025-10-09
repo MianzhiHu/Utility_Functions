@@ -1703,11 +1703,12 @@ def _fit_one_subject(args):
     model, pid, pdata, init_ev, num_iterations, fit_kwargs = args
     # clone your model so each process has its own copy
     local_model = copy.deepcopy(model)
+
     # fit just this one subject
     df = local_model.fit(
         {pid: pdata},
         num_iterations=num_iterations,
-        initial_EV=init_ev,
+        # initial_EV=init_ev,
         **fit_kwargs
     )
     # grab the single‐row result
