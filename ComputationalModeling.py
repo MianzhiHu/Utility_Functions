@@ -37,6 +37,9 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
 
     total_n = len(pdata['reward'])
 
+    if model.skip_first == 1:
+        total_n -= 1  # Adjust total_n if skipping the first trial
+
     model.iteration = 0
     best_nll = 100000  # Initialize best negative log likelihood to a large number
     best_initial_guess = None
@@ -70,6 +73,10 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 123.9999)]
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 123.9999))
+        elif model_type == 'delta_uncertainty':
+            initial_guess = [np.random.uniform(0.0001, 5.0), np.random.uniform(0.01, 0.99),
+                             np.random.uniform(0.5, 5.0), np.random.uniform(0, 1000)]
+            bounds = ((0.0001, 5.0), (0.01, 0.99), (0.5, 5.0), (0, 1000))
         elif model_type in ('delta_decay', 'sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV'):
             if model.num_params == 2:
                 initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
@@ -103,6 +110,11 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
                              np.random.uniform(-1.9999, -0.0001)]
             bounds = ((0.0001, 0.9999), (0.0001, 0.9999), (-1.9999, -0.0001))
 
+        if model.model_initialization == model.parameterized_init or model.model_initialization == model.parameterized_skip_first_init:
+            # add one more parameter for initial EV
+            initial_guess.append(np.random.uniform(-2, 2))
+            bounds = bounds + (( -2, 2),)
+
         if model.task == 'ABCD':
             result = minimize(model.negative_log_likelihood, initial_guess,
                               args=(pdata['reward'], pdata['choice'], pdata['choiceset']),
@@ -116,7 +128,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             best_nll = result.fun
             best_initial_guess = initial_guess
             best_parameters = result.x
-            best_EV = model.final_EVs.copy()
+            # best_EV = model.final_EVs.copy()
 
     k = len(best_parameters)  # Number of parameters
     aic = 2 * k + 2 * best_nll
@@ -159,7 +171,7 @@ class ComputationalModels:
         self.num_exp_restart = None
         self.num_params = num_params
         self.initial_EV = None
-        self.choices_count = np.zeros(self.num_options)
+        self.choices_count = np.ones(self.num_options)
         self.possible_options = [0, 1, 2, 3]
         self.memory_weights = []
         self.choice_history = []
@@ -178,6 +190,7 @@ class ComputationalModels:
             'delta_PVL': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
             'delta_PVL_relative': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
             'delta_PVL_relative_RR': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
+            'delta_uncertainty': {'t': 0, 'a': 1, 'unc': 2, 'w': 3},
             'decay': {'t': 0, 'a': 1},
             'decay_fre': {'t': 0, 'a': 1, 'b': 2},
             'decay_choice': {'t': 0, 'a': 1},
@@ -203,7 +216,11 @@ class ComputationalModels:
         self._DEFAULT_ATTRS = [
             'RT_initial_suboptimal', 'RT_initial_optimal', 'RT_initial',
             'k', 's', 't', 'a', 'b', 'tau', 'lamda',
-            'p_ws', 'p_ls', 'w',
+            'p_ws', 'p_ls', 'w', 'param_EV'
+        ]
+
+        self._EXTENDED_ATTRS = [
+            'unc'
         ]
 
         # initialize default b overrides
@@ -221,7 +238,12 @@ class ComputationalModels:
         for attr in self._DEFAULT_ATTRS:
             setattr(self, attr, None)
 
+        for attr in self._EXTENDED_ATTRS:
+            setattr(self, attr, 1.0) # These attributes need to have default values
+
         self.EVs = None
+        self.EVs_raw = None
+        self.UVs = None
         self.Probs = None
         self.mean = None
         self.var = None
@@ -238,6 +260,7 @@ class ComputationalModels:
             'delta_PVL': self.delta_PVL_update,
             'delta_PVL_relative': self.delta_PVL_relative_update,
             'delta_PVL_relative_RR': self.delta_PVL_relative_RR_update,
+            'delta_uncertainty': self.delta_uncertainty_update,
             'decay': self.decay_update,
             'decay_fre': self.decay_fre_update,
             'decay_choice': self.decay_choice_update,
@@ -268,6 +291,7 @@ class ComputationalModels:
             'delta_PVL': self.standard_nll,
             'delta_PVL_relative': self.standard_nll,
             'delta_PVL_relative_RR': self.standard_nll,
+            'delta_uncertainty': self.standard_nll,
             'decay': self.standard_nll,
             'decay_fre': self.standard_nll,
             'decay_choice': self.standard_nll,
@@ -294,6 +318,7 @@ class ComputationalModels:
             'delta_PVL': self.igt_nll,
             'delta_PVL_relative': self.igt_nll,
             'delta_PVL_relative_RR': self.igt_nll,
+            'delta_uncertainty': self.igt_nll,
             'decay': self.igt_nll,
             'decay_fre': self.igt_nll,
             'decay_choice': self.igt_nll,
@@ -351,6 +376,7 @@ class ComputationalModels:
             'delta_PVL': self.softmax,
             'delta_PVL_relative': self.softmax,
             'delta_PVL_relative_RR': self.softmax,
+            'delta_uncertainty': self.softmax,
             'decay': self.softmax,
             'decay_fre': self.softmax,
             'decay_choice': self.softmax,
@@ -376,16 +402,18 @@ class ComputationalModels:
         """
         Reset the model and empty all the lists.
         """
-        self.choices_count = np.zeros(self.num_options)
         self.memory_weights = []
         self.choice_history = []
         self.reward_history = []
+        self.choices_count = np.ones(self.num_options)
         self.chosen_history = {option: [] for option in self.possible_options}
         self.reward_history_by_option = {option: [] for option in self.possible_options}
         self.AllProbs = []
         self.PE = []
 
         self.EVs = self.initial_EV.copy()
+        self.EVs_raw = self.initial_EV.copy()
+        self.UVs = np.full(self.num_options, self.unc ** 2)
         self.Probs = np.full(self.num_options, 0.25)
         self.mean = np.mean(self.initial_EV.copy())
         self.AV = np.mean(self.initial_EV.copy())
@@ -393,8 +421,8 @@ class ComputationalModels:
 
     def softmax(self, x):
         c = 3 ** self.t - 1
-        e_x = np.exp(np.clip(c * x, -700, 700))
-        return np.clip(e_x / e_x.sum(), 1e-12, 1 - 1e-12)
+        e_x = np.exp(np.clip(c * x, a_min=-700, a_max=700))
+        return np.clip(e_x / e_x.sum(), a_min=1e-32, a_max=1-1e-32)
 
     def softmax_ACTR(self, x):
         """
@@ -406,7 +434,7 @@ class ComputationalModels:
         t = np.sqrt(2) * self.s
 
         e_x = np.exp(np.clip(x / t, -700, 700))
-        return np.clip(e_x / e_x.sum(), 1e-12, 1 - 1e-12)
+        return np.clip(e_x / e_x.sum(), 1e-32, 1 - 1e-32)
 
     def calculate_activation(self, appearances, current_trial):
         """
@@ -533,6 +561,15 @@ class ComputationalModels:
         prediction_error = utility - self.EVs[chosen]
         self.EVs[chosen] += self.a * prediction_error
         self.AV += self.a * reward_diff
+
+    def delta_uncertainty_update(self, chosen, reward, trial, choiceset=None):
+        prediction_error = reward - self.EVs_raw[chosen]
+        self.EVs_raw[chosen] += self.a * prediction_error
+        self.UVs[chosen] += self.a * (prediction_error ** 2 - self.UVs[chosen])
+        uncertainty = (np.sqrt(self.UVs)) / (np.sqrt(self.choices_count))
+        self.EVs = self.EVs_raw - uncertainty * self.w
+        # print(f'Trial {trial}: Chosen {chosen}, Reward {reward}, PE {prediction_error}, EV_raw {self.EVs_raw}, UV {self.UVs}, choice count {self.choices_count}, Unc {uncertainty}, EV {self.EVs}')
+        # print(f'parameters: a={self.a}, w={self.w}, unc={self.unc}, initial_EV={self.param_EV}')
 
     def decay_update(self, chosen, reward, trial, choiceset=None):
         self.EVs = [x * (1 - self.a) for x in self.EVs]
@@ -887,7 +924,7 @@ class ComputationalModels:
 
             # if the current trial is the starting trial of the new experiment and if the initialization is set to 'first_trial',
             # we initialize the model with the first trial
-            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+            if t % self.num_exp_restart == 1 and self.skip_first:
                 self.model_initialization(reward, choice, trial, choiceset, t-2)
                 continue
 
@@ -920,7 +957,7 @@ class ComputationalModels:
 
             # if the current trial is the starting trial of the new experiment and if the initialization is set to 'first_trial',
             # we initialize the model with the first trial
-            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+            if t % self.num_exp_restart == 1 and self.skip_first:
                 self.model_initialization(reward, choice, trial, choiceset, t-2)
                 continue
 
@@ -949,7 +986,7 @@ class ComputationalModels:
 
             # if the current trial is the starting trial of the new experiment and if the initialization is set to 'first_trial',
             # we initialize the model with the first trial
-            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+            if t % self.num_exp_restart == 1 and self.skip_first:
                 self.model_initialization(reward, choice, trial, choiceset, t-2)
                 continue
 
@@ -971,11 +1008,12 @@ class ComputationalModels:
         :param epsilon:
         :return:
         """
-        self.reset()
 
         cfg = self._PARAM_MAP.get(self.model_type, {})
         for attr, idx in cfg.items():
             setattr(self, attr, params[idx])
+
+        self.reset()
 
         trial = np.arange(1, len(reward) + 1)
 
@@ -996,6 +1034,12 @@ class ComputationalModels:
         # fixed initialization of the model does not need to do anything special
         pass
 
+    def fixed_skip_first_init(self, reward, choice, trial, choiceset=None, trial_index=0):
+        # fixed initialization of the model does not need to do anything special
+        # but we need to skip the first trial
+        self.update(choice[trial_index], reward[trial_index], trial[trial_index], choiceset[trial_index] if choiceset is not None else None)
+        pass
+
     def first_trial_init(self, reward, choice, trial, choiceset=None, trial_index=0):
         """
         Compute the negative log likelihood for the given parameters and data, initializing the model on the first trial.
@@ -1012,6 +1056,9 @@ class ComputationalModels:
         # Populate the EVs for the first trial
         EV_trial1 = self.EVs[choice[trial_index]]
         self.EVs = np.full(self.num_options, EV_trial1)
+        self.EVs_raw = np.full(self.num_options, self.EVs_raw[choice[trial_index]])
+        self.UVs = np.full(self.num_options, self.unc ** 2) # reset uncertainty to initial value
+        self.choices_count = np.ones(self.num_options)  # reset choice counts to 1
         self.AV = EV_trial1
 
     def first_trial_no_alpha_init(self, reward, choice, trial, choiceset=None, trial_index=0):
@@ -1038,7 +1085,31 @@ class ComputationalModels:
         # Populate the EVs for the first trial
         EV_trial1 = self.EVs[choice[trial_index]]
         self.EVs = np.full(self.num_options, EV_trial1)
+        self.EVs_raw = np.full(self.num_options, self.EVs_raw[choice[trial_index]])
+        self.UVs = np.full(self.num_options, self.unc ** 2) # reset uncertainty to initial value
+        self.choices_count = np.ones(self.num_options)  # reset choice counts to 1
         self.AV = EV_trial1
+
+    def parameterized_init(self, reward, choice, trial, choiceset=None, trial_index=0):
+        # add one parameter to all models
+        self.initial_EV = np.full(self.num_options, self.param_EV)
+        self.EVs = self.initial_EV.copy()
+        self.EVs_raw = self.initial_EV.copy()
+        self.UVs = np.full(self.num_options, self.unc ** 2)  # reset uncertainty to initial value
+        self.choices_count = np.ones(self.num_options)  # reset choice counts to 1
+        self.AV = self.param_EV
+
+    def parameterized_skip_first_init(self, reward, choice, trial, choiceset=None, trial_index=0):
+        # add one parameter to all models
+        self.initial_EV = np.full(self.num_options, self.param_EV)
+        self.EVs = self.initial_EV.copy()
+        self.EVs_raw = self.initial_EV.copy()
+        self.UVs = np.full(self.num_options, self.unc ** 2) # reset uncertainty to initial value
+        self.choices_count = np.ones(self.num_options)  # reset choice counts to 1
+        self.AV = self.param_EV
+
+        # skip the first trial
+        self.update(choice[trial_index], reward[trial_index], trial[trial_index], choiceset[trial_index] if choiceset is not None else None)
 
     def fit(self, data, num_training_trials=150, num_exp_restart=999, initial_EV=None, initial_mode='fixed',
             num_iterations=100, beta_lower=-1, beta_upper=1):
@@ -1050,11 +1121,26 @@ class ComputationalModels:
 
         if initial_mode == 'fixed':
             self.model_initialization = self.fixed_init
+        elif initial_mode == 'fixed_skip_first':
+            self.model_initialization = self.fixed_skip_first_init
         elif initial_mode == 'first_trial':
             self.model_initialization = self.first_trial_init
         elif initial_mode == 'first_trial_no_alpha':
             self.model_initialization = self.first_trial_no_alpha_init
-        self.skip_first = 0 if initial_mode == 'fixed' else 1
+        elif initial_mode == 'parameterized':
+            self.model_initialization = self.parameterized_init
+            self._PARAM_MAP = {
+                model: {**mp, "param_EV": (max(mp.values()) + 1) if mp else 0}
+                for model, mp in self._PARAM_MAP.items()
+            }
+        elif initial_mode == 'parameterized_skip_first':
+            self.model_initialization = self.parameterized_skip_first_init
+            self._PARAM_MAP = {
+                model: {**mp, "param_EV": (max(mp.values()) + 1) if mp else 0}
+                for model, mp in self._PARAM_MAP.items()
+            }
+
+        self.skip_first = 0 if initial_mode in ('fixed', 'parameterized') else 1
 
         # Creating a list to hold the future results
         futures = []
@@ -1077,7 +1163,7 @@ class ComputationalModels:
 
     def post_hoc_simulation(self, fitting_result, original_data, reward_means,
                             reward_sd, num_iterations=1000, AB_freq=100, CD_freq=50, use_random_sequence=True,
-                            sim_trials=250, summary=False):
+                            sim_trials=250, summary=False, initial_EV=[0.0, 0.0, 0.0, 0.0]):
 
         num_parameters = len(fitting_result['best_parameters'][0].strip('[]').split())
 
@@ -1100,12 +1186,19 @@ class ComputationalModels:
         for participant in fitting_result['participant_id']:
 
             # extract the best-fitting parameters for the current participant
-            self.s = parameter_sequences[0][participant - 1] if self.model_type == 'ACTR_Ori' else None
-            self.t = parameter_sequences[0][participant - 1]
-            self.a = parameter_sequences[1][participant - 1]
-            self.b = parameter_sequences[2][participant - 1] if num_parameters == 3 else self.a
-            self.tau = parameter_sequences[2][participant - 1] if self.model_type in ('ACTR', 'ACTR_Ori') else None
-            self.lamda = parameter_sequences[2][participant - 1] if self.model_type == 'mean_var_utility' else None
+            p_param = fitting_result['best_parameters'][0].strip('[]').split()
+            p_param = np.array([float(p) for p in p_param])
+
+            cfg = self._PARAM_MAP.get(self.model_type, {})
+            for attr, idx in cfg.items():
+                setattr(self, attr, float(p_param[idx]))
+
+            self.b = getattr(self, self._B_OVERRIDES.get(self.model_type, 'b'))
+
+            if 'param_EV' in self._PARAM_MAP.get(self.model_type, {}):
+                self.initial_EV = np.full(self.num_options, float(self.param_EV))
+            else:
+                self.initial_EV = np.array(initial_EV)
 
             for _ in range(num_iterations):
 
