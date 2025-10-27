@@ -35,10 +35,8 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
     print(f"Fitting participant {participant_id}...")
     start_time = time.time()
 
-    total_n = len(pdata['reward'])
-
-    if model.skip_first == 1:
-        total_n -= 1  # Adjust total_n if skipping the first trial
+    n_blocks = int(np.ceil(len(pdata['reward']) / model.num_exp_restart))
+    total_n = len(pdata['reward']) - (n_blocks if model.skip_first else 0)
 
     model.iteration = 0
     best_nll = 100000  # Initialize best negative log likelihood to a large number
@@ -54,13 +52,13 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
                                                           num_iterations))
 
         if model_type in ('decay', 'delta', 'decay_choice', 'decay_win'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999))
+            initial_guess = [np.random.uniform(0.0001, 5.00), np.random.uniform(0.01, 0.99)]
+            bounds = ((0.0001, 5.00), (0.01, 0.99))
         elif model_type in ('delta_PVL', 'delta_PVL_relative', 'delta_PVL_relative_RR', 'decay_PVL',
                             'decay_PVL_relative', 'decay_PVL_relative_RR'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999))
+            initial_guess = [np.random.uniform(0.0001, 5.00), np.random.uniform(0.01, 0.99),
+                             np.random.uniform(0.00, 1.00), np.random.uniform(0.00, 5.00)]
+            bounds = ((0.0001, 5.0), (0.01, 0.99), (0.00, 1.00), (0.00, 5.00))
         elif model_type in ('decay_fre'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(beta_lower, beta_upper)]
@@ -75,7 +73,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 123.9999))
         elif model_type == 'delta_uncertainty':
             initial_guess = [np.random.uniform(0.0001, 5.0), np.random.uniform(0.01, 0.99),
-                             np.random.uniform(0.5, 5.0), np.random.uniform(0, 1000)]
+                             np.random.uniform(0.5, 5.0), np.random.uniform(0.0, 1000.0)]
             bounds = ((0.0001, 5.0), (0.01, 0.99), (0.5, 5.0), (0, 1000))
         elif model_type in ('delta_decay', 'sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV'):
             if model.num_params == 2:
@@ -86,9 +84,9 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
                                  np.random.uniform(0.0001, 0.9999)]
                 bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999))
         elif model_type == 'decay_PVPE':
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999))
+            initial_guess = [np.random.uniform(0.0001, 5.00), np.random.uniform(0.01, 0.99),
+                             np.random.uniform(0.00, 1.00), np.random.uniform(0.00, 1.00)]
+            bounds = ((0.0001, 5.00), (0.01, 0.99), (0.00, 1.00), (0.00, 1.00))
         elif model_type == 'WSLS':
             initial_guess = [np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 0.9999), (0.0001, 0.9999))
@@ -113,7 +111,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
         if model.model_initialization == model.parameterized_init or model.model_initialization == model.parameterized_skip_first_init:
             # add one more parameter for initial EV
             initial_guess.append(np.random.uniform(-2, 2))
-            bounds = bounds + (( -2, 2),)
+            bounds = bounds + ((-2, 2),)
 
         if model.task == 'ABCD':
             result = minimize(model.negative_log_likelihood, initial_guess,
@@ -131,6 +129,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             # best_EV = model.final_EVs.copy()
 
     k = len(best_parameters)  # Number of parameters
+    print(f'number of parameters: {k}; number of trials: {total_n}')
     aic = 2 * k + 2 * best_nll
     bic = k * np.log(total_n) + 2 * best_nll
 
@@ -198,7 +197,7 @@ class ComputationalModels:
             'decay_PVL': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
             'decay_PVL_relative': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
             'decay_PVL_relative_RR': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
-            'decay_PVPE': {'t': 0, 'a': 1, 'w': 2, 'lamda': 3},
+            'decay_PVPE': {'t': 0, 'a': 1, 'w': 2, 'b': 3},
             'delta_decay': {'t': 0, 'a': 1, 'b': 2},
             'mean_var_utility': {'t': 0, 'a': 1, 'lamda': 2},
             'sampler_decay': {'t': 0, 'a': 1},
@@ -421,8 +420,9 @@ class ComputationalModels:
 
     def softmax(self, x):
         c = 3 ** self.t - 1
-        e_x = np.exp(np.clip(c * x, a_min=-700, a_max=700))
-        return np.clip(e_x / e_x.sum(), a_min=1e-32, a_max=1-1e-32)
+        x_norm = x - np.min(x)
+        e_x = np.exp(np.minimum(c * x_norm, 700))
+        return np.clip(e_x / e_x.sum(), a_min=1e-64, a_max=1.0-1e-64)
 
     def softmax_ACTR(self, x):
         """
@@ -568,38 +568,36 @@ class ComputationalModels:
         self.UVs[chosen] += self.a * (prediction_error ** 2 - self.UVs[chosen])
         uncertainty = (np.sqrt(self.UVs)) / (np.sqrt(self.choices_count))
         self.EVs = self.EVs_raw - uncertainty * self.w
-        # print(f'Trial {trial}: Chosen {chosen}, Reward {reward}, PE {prediction_error}, EV_raw {self.EVs_raw}, UV {self.UVs}, choice count {self.choices_count}, Unc {uncertainty}, EV {self.EVs}')
-        # print(f'parameters: a={self.a}, w={self.w}, unc={self.unc}, initial_EV={self.param_EV}')
 
     def decay_update(self, chosen, reward, trial, choiceset=None):
-        self.EVs = [x * (1 - self.a) for x in self.EVs]
+        self.EVs = np.asarray(self.EVs) * (1 - self.a)
         self.EVs[chosen] += reward
 
     def decay_fre_update(self, chosen, reward, trial, choiceset=None):
         multiplier = self.choices_count[chosen] ** (-self.b)
-        self.EVs = [x * (1 - self.a) for x in self.EVs]
+        self.EVs = np.asarray(self.EVs) * (1 - self.a)
         self.EVs[chosen] += reward * multiplier
 
     def decay_choice_update(self, chosen, reward, trial, choiceset=None):
-        self.EVs = [x * (1 - self.a) for x in self.EVs]
+        self.EVs = np.asarray(self.EVs) * (1 - self.a)
         self.EVs[chosen] += 1
 
     def decay_win_update(self, chosen, reward, trial, choiceset=None):
         prediction_error = reward - self.AV
-        self.EVs = [x * (1 - self.a) for x in self.EVs]
+        self.EVs = np.asarray(self.EVs) * (1 - self.a)
         self.EVs[chosen] += (prediction_error > 0)
         self.AV += prediction_error * self.a
 
     def decay_PVL_update(self, chosen, reward, trial, choiceset=None):
         utility = (np.abs(reward) ** self.b) * (reward >= 0) + (-self.lamda * (np.abs(reward) ** self.b)) * (reward < 0)
-        self.EVs = [x * (1 - self.a) for x in self.EVs]
+        self.EVs = np.asarray(self.EVs) * (1 - self.a)
         self.EVs[chosen] += utility
 
     def decay_PVL_relative_update(self, chosen, reward, trial, choiceset=None):
         prediction_error = reward - self.AV
         utility = ((np.abs(prediction_error) ** self.b) * (prediction_error >= 0) +
                    (-self.lamda * (np.abs(prediction_error) ** self.b)) * (prediction_error < 0))
-        self.EVs = [x * (1 - self.a) for x in self.EVs]
+        self.EVs = np.asarray(self.EVs) * (1 - self.a)
         self.EVs[chosen] += utility
         self.AV += self.a * prediction_error
 
@@ -608,22 +606,22 @@ class ComputationalModels:
         prediction_error = reward - self.AV
         utility = ((np.abs(reward) ** self.b) * (prediction_error >= 0) +
                    ((1 / self.lamda) * (np.abs(prediction_error) ** self.b)) * (prediction_error < 0))
-        self.EVs = [x * (1 - self.a) for x in self.EVs]
+        self.EVs = np.asarray(self.EVs) * (1 - self.a)
         self.EVs[chosen] += utility
         self.AV += self.a * prediction_error
 
     def decay_PVPE_update(self, chosen, reward, trial, choiceset=None):
         prediction_error = reward - self.AV
-        utility = ((prediction_error >= 0) * (1 - self.w) * (np.abs(prediction_error) ** self.lamda) +
-                            (prediction_error < 0) * self.w * (np.abs(prediction_error) ** self.lamda))
-        self.EVs = [x * (1 - self.a) for x in self.EVs]
-        self.EVs[chosen] += utility
         self.AV += self.a * prediction_error
+        utility = ((prediction_error >= 0) * (1 - self.w) * (np.abs(prediction_error) ** self.b) -
+                            (prediction_error < 0) * self.w * (np.abs(prediction_error) ** self.b))
+        self.EVs = np.asarray(self.EVs) * (1 - self.a)
+        self.EVs[chosen] += utility
 
     def delta_decay_update(self, chosen, reward, trial, choiceset=None):
         prediction_error = reward - self.EVs[chosen]
         self.EVs[chosen] += self.a * prediction_error
-        self.EVs = [x * (1 - self.b) for x in self.EVs]
+        self.EVs = np.asarray(self.EVs) * (1 - self.b)
 
     def mean_var_utility(self, chosen, reward, trial, choiceset=None):
         prediction_error = reward - self.mean[chosen]
@@ -642,7 +640,7 @@ class ComputationalModels:
         self.memory_weights.append(1)
 
         # Decay weights of past trials and EVs
-        self.EVs = self.EVs * (1 - self.a)
+        self.EVs = np.asarray(self.EVs) * (1 - self.a)
         self.memory_weights = [w * (1 - self.b) for w in self.memory_weights]
 
         # Compute the probabilities from memory weights
@@ -668,7 +666,7 @@ class ComputationalModels:
         self.PE.append(prediction_error)
 
         # Decay weights of past trials and EVs
-        self.EVs = [x * (1 - self.a) for x in self.EVs]
+        self.EVs = np.asarray(self.EVs) * (1 - self.a)
         self.memory_weights = [w * (1 - self.b) for w in self.memory_weights]
 
         # Compute the probabilities from memory weights
@@ -695,7 +693,7 @@ class ComputationalModels:
         self.PE.append(prediction_error)
 
         # Decay weights of past trials and EVs
-        self.EVs = [x * (1 - self.a) for x in self.EVs]
+        self.EVs = np.asarray(self.EVs) * (1 - self.a)
         self.memory_weights = [w * (1 - self.b) for w in self.memory_weights]
 
         # Compute the probabilities from memory weights
@@ -754,7 +752,7 @@ class ComputationalModels:
 
         # Decay
         self.EVs[chosen] += reward
-        self.EVs = self.EVs * (1 - self.a)
+        self.EVs = np.asarray(self.EVs) * (1 - self.a)
 
     def ACTR_update(self, chosen, reward, trial, choiceset=None):
 
@@ -959,6 +957,7 @@ class ComputationalModels:
             # we initialize the model with the first trial
             if t % self.num_exp_restart == 1 and self.skip_first:
                 self.model_initialization(reward, choice, trial, choiceset, t-2)
+                print(f'activated on trial {t}')
                 continue
 
             # if the trial is not a training trial, we skip the update
@@ -1037,8 +1036,18 @@ class ComputationalModels:
     def fixed_skip_first_init(self, reward, choice, trial, choiceset=None, trial_index=0):
         # fixed initialization of the model does not need to do anything special
         # but we need to skip the first trial
-        self.update(choice[trial_index], reward[trial_index], trial[trial_index], choiceset[trial_index] if choiceset is not None else None)
+        # self.update(choice[trial_index], reward[trial_index], trial[trial_index], choiceset[trial_index] if choiceset is not None else None)
         pass
+
+    def midpoint_skip_first_init(self, reward, choice, trial, choiceset=None, trial_index=0):
+        # initialize all EVs to the midpoint between 0 and the reward of the first trial
+        midpoint_EV = np.mean(reward)
+        self.initial_EVs = np.full(self.num_options, midpoint_EV)
+        self.EVs = self.initial_EVs.copy()
+        self.EVs_raw = self.initial_EVs.copy()
+        self.UVs = np.full(self.num_options, self.unc ** 2) # reset uncertainty to initial value
+        self.choices_count = np.ones(self.num_options)  # reset choice counts to 1
+        self.AV = midpoint_EV
 
     def first_trial_init(self, reward, choice, trial, choiceset=None, trial_index=0):
         """
@@ -1059,7 +1068,7 @@ class ComputationalModels:
         self.EVs_raw = np.full(self.num_options, self.EVs_raw[choice[trial_index]])
         self.UVs = np.full(self.num_options, self.unc ** 2) # reset uncertainty to initial value
         self.choices_count = np.ones(self.num_options)  # reset choice counts to 1
-        self.AV = EV_trial1
+        self.AV = reward[trial_index]
 
     def first_trial_no_alpha_init(self, reward, choice, trial, choiceset=None, trial_index=0):
         """
@@ -1088,7 +1097,7 @@ class ComputationalModels:
         self.EVs_raw = np.full(self.num_options, self.EVs_raw[choice[trial_index]])
         self.UVs = np.full(self.num_options, self.unc ** 2) # reset uncertainty to initial value
         self.choices_count = np.ones(self.num_options)  # reset choice counts to 1
-        self.AV = EV_trial1
+        self.AV = reward[trial_index]
 
     def parameterized_init(self, reward, choice, trial, choiceset=None, trial_index=0):
         # add one parameter to all models
@@ -1097,7 +1106,7 @@ class ComputationalModels:
         self.EVs_raw = self.initial_EV.copy()
         self.UVs = np.full(self.num_options, self.unc ** 2)  # reset uncertainty to initial value
         self.choices_count = np.ones(self.num_options)  # reset choice counts to 1
-        self.AV = self.param_EV
+        self.AV = reward[trial_index]
 
     def parameterized_skip_first_init(self, reward, choice, trial, choiceset=None, trial_index=0):
         # add one parameter to all models
@@ -1106,10 +1115,10 @@ class ComputationalModels:
         self.EVs_raw = self.initial_EV.copy()
         self.UVs = np.full(self.num_options, self.unc ** 2) # reset uncertainty to initial value
         self.choices_count = np.ones(self.num_options)  # reset choice counts to 1
-        self.AV = self.param_EV
+        self.AV = reward[trial_index]
 
         # skip the first trial
-        self.update(choice[trial_index], reward[trial_index], trial[trial_index], choiceset[trial_index] if choiceset is not None else None)
+        # self.update(choice[trial_index], reward[trial_index], trial[trial_index], choiceset[trial_index] if choiceset is not None else None)
 
     def fit(self, data, num_training_trials=150, num_exp_restart=999, initial_EV=None, initial_mode='fixed',
             num_iterations=100, beta_lower=-1, beta_upper=1):
@@ -1121,6 +1130,8 @@ class ComputationalModels:
 
         if initial_mode == 'fixed':
             self.model_initialization = self.fixed_init
+        elif initial_mode == 'midpoint_skip_first':
+            self.model_initialization = self.midpoint_skip_first_init
         elif initial_mode == 'fixed_skip_first':
             self.model_initialization = self.fixed_skip_first_init
         elif initial_mode == 'first_trial':
@@ -1161,18 +1172,9 @@ class ComputationalModels:
 
         return pd.DataFrame(results)
 
-    def post_hoc_simulation(self, fitting_result, original_data, reward_means,
-                            reward_sd, num_iterations=1000, AB_freq=100, CD_freq=50, use_random_sequence=True,
-                            sim_trials=250, summary=False, initial_EV=[0.0, 0.0, 0.0, 0.0]):
-
-        num_parameters = len(fitting_result['best_parameters'][0].strip('[]').split())
-
-        parameter_sequences = []
-        for i in range(num_parameters):
-            sequence = fitting_result['best_parameters'].apply(
-                lambda x: float(x.strip('[]').split()[i]) if isinstance(x, str) else np.nan
-            )
-            parameter_sequences.append(sequence)
+    def post_hoc_simulation(self, fitting_result, reward_means, reward_sd, num_iterations=1000, AB_freq=100, CD_freq=50,
+                            use_random_sequence=True, sim_trials=250, summary=False, initial_mode='fixed',
+                            initial_EV=[0.0, 0.0, 0.0, 0.0], original_data=None):
 
         if not use_random_sequence:
             trial_index = original_data.groupby('Subnum')['trial_index'].apply(list)
@@ -1189,16 +1191,33 @@ class ComputationalModels:
             p_param = fitting_result['best_parameters'][0].strip('[]').split()
             p_param = np.array([float(p) for p in p_param])
 
+            # extract first trial data for initialization if needed
+            first_trial = original_data[(original_data['Subnum'] == participant) & (original_data['trial_index'] == 1)]
+
             cfg = self._PARAM_MAP.get(self.model_type, {})
             for attr, idx in cfg.items():
                 setattr(self, attr, float(p_param[idx]))
 
             self.b = getattr(self, self._B_OVERRIDES.get(self.model_type, 'b'))
 
-            if 'param_EV' in self._PARAM_MAP.get(self.model_type, {}):
-                self.initial_EV = np.full(self.num_options, float(self.param_EV))
-            else:
+            if initial_mode in ('parameterized', 'parameterized_skip_first'):
+                self.param_EV = float(p_param[-1])
+                self.parameterized_skip_first_init(first_trial['Reward'].values,
+                                                 first_trial['Keyresponse'].values,
+                                                 first_trial['trial_index'].values,
+                                                 first_trial['SetSeen.'].values)
+            elif initial_mode in ('first_trial', 'first_trial_no_alpha'):
+                self.first_trial_no_alpha_init(first_trial['reward'].values, first_trial['choice'].values,
+                                               first_trial['trial_index'].values, first_trial['TrialType'].values)
+            elif initial_mode in ('fixed', 'fixed_skip_first'):
                 self.initial_EV = np.array(initial_EV)
+                self.fixed_skip_first_init(first_trial['reward'].values, first_trial['choice'].values,
+                                           first_trial['trial_index'].values, first_trial['TrialType'].values)
+            elif initial_mode == 'midpoint_skip_first':
+                self.midpoint_skip_first_init(first_trial['reward'].values,
+                                              first_trial['choice'].values,
+                                              first_trial['trial_index'].values,
+                                              first_trial['TrialType'].values)
 
             for _ in range(num_iterations):
 
@@ -1216,6 +1235,7 @@ class ComputationalModels:
                     training_trial_sequence, transfer_trial_sequence = generate_random_trial_sequence(AB_freq, CD_freq)
 
                     for trial in range(sim_trials):
+                        print(f'Trial {trial + 1} of {sim_trials}, EV={self.EVs}')
                         trial_indice = trial + 1
                         trial_indices.append(trial_indice)
 
@@ -1262,12 +1282,7 @@ class ComputationalModels:
 
                 all_results.append({
                     "Subnum": participant,
-                    "s": self.s,
-                    "t": self.t,
-                    "a": self.a,
-                    "b": self.b,
-                    "lamda": self.lamda if self.model_type == 'mean_var_utility' else None,
-                    "tau": self.tau if self.model_type in ('ACTR', 'ACTR_Ori') else None,
+                    "parameters": p_param,
                     "trial_indices": trial_indices,
                     "trial_details": trial_details
                 })
@@ -1277,23 +1292,11 @@ class ComputationalModels:
         for result in all_results:
             sim_num = result['Subnum']
 
-            s = result["s"]
-            t = result["t"]
-            a = result["a"]
-            b = result["b"]
-            lamda = result["lamda"] if self.model_type == 'mean_var_utility' else None
-            tau = result["tau"] if self.model_type == 'ACTR' else None
-
             for trial_idx, trial_detail in zip(result['trial_indices'], result['trial_details']):
                 var = {
                     "Subnum": sim_num,
                     "trial_index": trial_idx,
-                    "s": s,
-                    "t": t,
-                    "a": a,
-                    "b": b,
-                    "lamda": lamda,
-                    "tau": tau,
+                    "parameters": result['parameters'],
                     "pair": trial_detail['pair'],
                     "choice": trial_detail['choice'],
                     "reward": trial_detail['reward'],
@@ -1303,8 +1306,6 @@ class ComputationalModels:
 
         df = pd.DataFrame(unpacked_results)
         df.dropna(how='all', inplace=True, axis=1)
-        if all(df['a'] == df['b']):
-            df.drop('b', axis=1, inplace=True)
 
         if summary:
             if use_random_sequence:
