@@ -24,7 +24,6 @@ def process_participant_data(participant_path, sgt_pos=1, igt_pos=3, img_pos=2):
                     try:
                         dfs.append(json.loads(line))
                     except json.JSONDecodeError:
-                        print(f"Skipping invalid JSON in {file_path}, line {lineno}")
                         continue
 
     # remove the empty dfs

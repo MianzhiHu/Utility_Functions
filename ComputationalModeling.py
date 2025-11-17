@@ -52,41 +52,41 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
                                                           num_iterations))
 
         if model_type in ('decay', 'delta', 'decay_choice', 'decay_win'):
-            initial_guess = [np.random.uniform(0.0001, 5.00), np.random.uniform(0.01, 0.99)]
-            bounds = ((0.0001, 5.00), (0.01, 0.99))
+            initial_guess = [np.random.uniform(0.0001, 5.00), np.random.uniform(0.0001, 0.9999)]
+            bounds = ((0.0001, 5.00), (0.0001, 0.9999))
         elif model_type in ('delta_PVL', 'delta_PVL_relative', 'delta_PVL_relative_RR', 'decay_PVL',
                             'decay_PVL_relative', 'decay_PVL_relative_RR'):
-            initial_guess = [np.random.uniform(0.0001, 5.00), np.random.uniform(0.01, 0.99),
-                             np.random.uniform(0.00, 1.00), np.random.uniform(0.00, 5.00)]
-            bounds = ((0.0001, 5.0), (0.01, 0.99), (0.00, 1.00), (0.00, 5.00))
+            initial_guess = [np.random.uniform(0.0001, 5.00), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 1.00), np.random.uniform(0.0001, 5.00)]
+            bounds = ((0.0001, 5.00), (0.0001, 0.9999), (0.0001, 1.00), (0.0001, 5.00))
         elif model_type in ('decay_fre'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(beta_lower, beta_upper)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (beta_lower, beta_upper))
+            bounds = ((0.0001, 5.0), (0.0001, 0.9999), (beta_lower, beta_upper))
         elif model_type in ('delta_asymmetric'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                         np.random.uniform(0.0001, 0.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999))
+            initial_guess = [np.random.uniform(0.0001, 5.00), np.random.uniform(0.0001, 0.9999),
+                         np.random.uniform(0.0001, 1.00)]
+            bounds = ((0.0001, 5.00), (0.0001, 0.9999), (0.0001, 1.00))
         elif model_type in ('mean_var_utility'):
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 123.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 123.9999))
+            bounds = ((0.0001, 5.00), (0.0001, 0.9999), (0.0001, 123.9999))
         elif model_type == 'delta_uncertainty':
             initial_guess = [np.random.uniform(0.0001, 5.0), np.random.uniform(0.01, 0.99),
                              np.random.uniform(0.5, 5.0), np.random.uniform(0.0, 1000.0)]
-            bounds = ((0.0001, 5.0), (0.01, 0.99), (0.5, 5.0), (0, 1000))
+            bounds = ((0.0001, 5.00), (0.01, 0.99), (0.5, 5.0), (0, 1000))
         elif model_type in ('delta_decay', 'sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV'):
             if model.num_params == 2:
                 initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
-                bounds = ((0.0001, 4.9999), (0.0001, 0.9999))
+                bounds = ((0.0001, 5.00), (0.0001, 0.9999))
             elif model.num_params == 3:
                 initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                                  np.random.uniform(0.0001, 0.9999)]
-                bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999))
+                bounds = ((0.0001, 5.00), (0.0001, 0.9999), (0.0001, 0.9999))
         elif model_type == 'decay_PVPE':
-            initial_guess = [np.random.uniform(0.0001, 5.00), np.random.uniform(0.01, 0.99),
-                             np.random.uniform(0.00, 1.00), np.random.uniform(0.00, 1.00)]
-            bounds = ((0.0001, 5.00), (0.01, 0.99), (0.00, 1.00), (0.00, 1.00))
+            initial_guess = [np.random.uniform(0.0001, 5.00), np.random.uniform(0.0001, 0.9999),
+                             np.random.uniform(0.0001, 1.00), np.random.uniform(0.0001, 1.00)]
+            bounds = ((0.0001, 5.00), (0.0001, 0.9999), (0.0001, 1.00), (0.0001, 1.00))
         elif model_type == 'WSLS':
             initial_guess = [np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999)]
             bounds = ((0.0001, 0.9999), (0.0001, 0.9999))
@@ -98,15 +98,15 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(0.0001, 0.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999))
+            bounds = ((0.0001, 5.00), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999))
         elif model_type == 'ACTR':
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
+            initial_guess = [np.random.uniform(0.0001, 5.00), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(-1.9999, -0.0001)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (-1.9999, -0.0001))
+            bounds = ((0.0001, 5.00), (0.0001, 0.9999), (-1.9999, -0.0001))
         elif model_type == 'ACTR_Ori':
-            initial_guess = [np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
+            initial_guess = [np.random.uniform(0.0001, 5.00), np.random.uniform(0.0001, 0.9999),
                              np.random.uniform(-1.9999, -0.0001)]
-            bounds = ((0.0001, 0.9999), (0.0001, 0.9999), (-1.9999, -0.0001))
+            bounds = ((0.0001, 5.00), (0.0001, 0.9999), (-1.9999, -0.0001))
 
         if model.model_initialization == model.parameterized_init or model.model_initialization == model.parameterized_skip_first_init:
             # add one more parameter for initial EV
@@ -126,10 +126,9 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             best_nll = result.fun
             best_initial_guess = initial_guess
             best_parameters = result.x
-            # best_EV = model.final_EVs.copy()
+            best_EV = model.final_EVs.copy()
 
     k = len(best_parameters)  # Number of parameters
-    print(f'number of parameters: {k}; number of trials: {total_n}')
     aic = 2 * k + 2 * best_nll
     bic = k * np.log(total_n) + 2 * best_nll
 
@@ -957,7 +956,6 @@ class ComputationalModels:
             # we initialize the model with the first trial
             if t % self.num_exp_restart == 1 and self.skip_first:
                 self.model_initialization(reward, choice, trial, choiceset, t-2)
-                print(f'activated on trial {t}')
                 continue
 
             # if the trial is not a training trial, we skip the update
