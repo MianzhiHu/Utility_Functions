@@ -43,6 +43,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
     best_initial_guess = None
     best_parameters = None
     best_EV = None
+    best_exploration = None
 
     for _ in range(num_iterations):  # Randomly initiate the starting parameter for 1000 times
 
@@ -127,6 +128,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             best_initial_guess = initial_guess
             best_parameters = result.x
             best_EV = model.final_EVs.copy()
+            best_exploration = model.final_exploration.copy()
 
     k = len(best_parameters)  # Number of parameters
     aic = 2 * k + 2 * best_nll
@@ -138,6 +140,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
         'best_initial_guess': best_initial_guess,
         'best_parameters': best_parameters,
         'best_EV': best_EV,
+        'exploitation': best_exploration,
         'AIC': aic,
         'BIC': bic
     }
@@ -162,7 +165,7 @@ class ComputationalModels:
         """
 
         self.skip_first = None
-        self.final_EVs = None
+        self.final_EVs = [0, 0, 0, 0]
         self.model_initialization = None
         self.num_options = 4 # This is only a placeholder, it will be set in the fit method
         self.num_training_trials = None
@@ -174,6 +177,8 @@ class ComputationalModels:
         self.memory_weights = []
         self.choice_history = []
         self.reward_history = []
+        self.exploration = []
+        self.final_exploration = []
         self.chosen_history = {option: [] for option in self.possible_options}
         self.reward_history_by_option = {option: [] for option in self.possible_options}
         self.AllProbs = []
@@ -220,6 +225,8 @@ class ComputationalModels:
         self._EXTENDED_ATTRS = [
             'unc'
         ]
+
+        self._Exploitation_map = {True: 'exploitation', False: 'exploration'}
 
         # initialize default b overrides
         if num_params == 2:
@@ -408,6 +415,7 @@ class ComputationalModels:
         self.reward_history_by_option = {option: [] for option in self.possible_options}
         self.AllProbs = []
         self.PE = []
+        self.exploration = []
 
         self.EVs = self.initial_EV.copy()
         self.EVs_raw = self.initial_EV.copy()
@@ -949,6 +957,7 @@ class ComputationalModels:
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
                 self.final_EVs = self.EVs.copy()
+                self.final_exploration = self.exploration.copy()
                 self.reset()
                 continue
 
@@ -973,11 +982,14 @@ class ComputationalModels:
 
         for r, ch, t in zip(reward, choice, trial):
             prob_choice = self.softmax_mapping[self.model_type](np.array(self.EVs))[ch]
+            self.exploration.append(self._Exploitation_map[ch == np.argmax(self.EVs)])
+
             nll += -np.log(max(self.epsilon, prob_choice))
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
                 self.final_EVs = self.EVs.copy()
+                self.final_exploration = self.exploration.copy()
                 self.reset()
                 continue
 
