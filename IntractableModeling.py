@@ -10,6 +10,9 @@ import ast
 from scipy.special import psi
 from scipy.stats import dirichlet
 import copy
+import torch
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Mapping of choices to pairs of options for model recovery
 mapping = {
@@ -47,8 +50,6 @@ MODEL_BOUNDS = {
     'delta_uncertainty': [(0.0001, 5.0), (0.01, 0.99), (0.5, 5.0), (0.0, 1000.0)],
     'WSLS': [(0.0001, 0.9999), (0.0001, 0.9999)],
     'WSLS_delta': [(0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999)],
-    'ACTR': [(0.0001, 5.0), (0.0001, 0.9999), (-1.9999, -0.0001)],
-    'ACTR_Ori': [(0.0001, 5.0), (0.0001, 0.9999), (-1.9999, -0.0001)],
 }
 
 
@@ -153,6 +154,7 @@ class ComputationalModels:
         - num_params: Number of parameters for the model.
         """
 
+        self.device = device
         self.skip_first = None
         self.final_EVs = [0, 0, 0, 0]
         self.model_initialization = None
@@ -200,8 +202,6 @@ class ComputationalModels:
             'WSLS_delta': {'a': 1, 'p_ws': 0, 'p_ls': 2},
             'WSLS_decay_weight': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'w': 4},
             'WSLS_delta_weight': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'w': 4},
-            'ACTR_Ori': {'a': 1, 's': 0, 'tau': 2},
-            'ACTR': {'t': 0, 'a': 1, 'tau': 2},
         }
 
         # any attributes you always want to have, even if None
@@ -272,8 +272,6 @@ class ComputationalModels:
             'WSLS_delta': self.WSLS_delta_update,
             'WSLS_delta_weight': self.WSLS_delta_weight_update,
             'WSLS_decay_weight': self.WSLS_decay_weight_update,
-            'ACTR': self.ACTR_update,
-            'ACTR_Ori': self.ACTR_update
         }
 
         self.updating_function = self.updating_mapping[self.model_type]
@@ -302,8 +300,6 @@ class ComputationalModels:
             'WSLS': self.WSLS_nll,
             'WSLS_delta': self.WSLS_nll,
             'WSLS_delta_weight': self.WSLS_nll,
-            'ACTR': self.ACTR_nll,
-            'ACTR_Ori': self.ACTR_nll
         }
 
         self.nll_mapping_IGT_SGT = {
@@ -330,8 +326,6 @@ class ComputationalModels:
             'WSLS_delta': self.WSLS_nll,
             'WSLS_delta_weight': self.WSLS_nll,
             'WSLS_decay_weight': self.WSLS_nll,
-            'ACTR': self.ACTR_nll,
-            'ACTR_Ori': self.ACTR_nll
         }
 
         if task == 'ABCD':
@@ -359,11 +353,6 @@ class ComputationalModels:
             }
         ]
 
-        self.activation_function_mapping = {
-            'ACTR_Ori': self.calculate_activation_ori,
-            'ACTR': self.calculate_activation
-        }
-
         self.softmax_mapping = {
             'delta': self.softmax,
             'delta_asymmetric': self.softmax,
@@ -388,8 +377,6 @@ class ComputationalModels:
             'WSLS_delta': self.softmax,
             'WSLS_delta_weight': self.softmax,
             'WSLS_decay_weight': self.softmax,
-            'ACTR': self.softmax,
-            'ACTR_Ori': self.softmax_ACTR
         }
 
     def reset(self):
@@ -415,69 +402,13 @@ class ComputationalModels:
         self.var = np.full(self.num_options, 1 / 12)
 
     def softmax(self, x):
-        c = 3 ** self.t - 1
-        x_norm = x - np.min(x)
-        e_x = np.exp(np.minimum(c * x_norm, 700))
-        return np.clip(e_x / e_x.sum(), a_min=1e-64, a_max=1.0-1e-64)
-
-    def softmax_ACTR(self, x):
-        """
-        This is the softmax function used in the ACT-R model (Erev et al., 2010).
-        It is different from the standard softmax rule used in most papers from our lab.
-        We have adapted the ACT-R model to use our own implementation of softmax, but will keep an original version
-        of the ACT-R model for comparison.
-        """
-        t = np.sqrt(2) * self.s
-
-        e_x = np.exp(np.clip(x / t, -700, 700))
-        return np.clip(e_x / e_x.sum(), 1e-32, 1 - 1e-32)
-
-    def calculate_activation(self, appearances, current_trial):
-        """
-        Calculate the activation level for each previous experience for each option in the current trial.
-        This version is adapted from the ACT-R model in Erev et al. (2010) using our own implementation of softmax.
-        """
-        s = 1 / (np.sqrt(2) * (3 ** self.t - 1))
-        sum_tk = np.sum([(current_trial - t) ** (-self.a) for t in appearances])
-        activation = np.log(sum_tk) + np.random.logistic(0, s)
-        return activation
-
-    def calculate_activation_ori(self, appearances, current_trial):
-        """
-        This is the original version of the activation calculation function used in the ACT-R model.
-        """
-        sum_tk = np.sum([(current_trial - t) ** (-self.a) for t in appearances])
-        activation = np.log(sum_tk) + np.random.logistic(0, self.s)
-        return activation
-
-    def activation_calculation(self, option, current_trial, exclude_current_trial=False):
-        # initialize lists to store activations and corresponding rewards
-        activations = []
-        corresponding_rewards = []
-
-        chosen_history = self.chosen_history[option][:-1] if exclude_current_trial else self.chosen_history[option]
-
-        for previous_trial_index, previous_trial in enumerate(chosen_history):
-            activation_level = self.activation_function_mapping[self.model_type](chosen_history, current_trial)
-            if activation_level > self.tau:
-                activations.append(activation_level)
-                corresponding_rewards.append(self.reward_history_by_option[option][previous_trial_index])
-
-        return activations, corresponding_rewards
-
-    def EV_calculation(self, option, rewards, activations):
-        """
-        Calculate the expected value for the given option based on the rewards and activations.
-        In the ACT-R model, the EV is calculated as the sum of the rewards weighted by their activation probabilities
-        """
-        # Proceed only if there is history for the chosen option and there are activated memories
-        if len(self.chosen_history[option]) > 0 and len(activations) > 0:
-            probabilities = self.softmax_mapping[self.model_type](np.array(activations))
-            # Calculate the expected value as the weighted mean of rewards
-            self.EVs[option] = np.dot(probabilities, rewards)
-        else:
-            # If there are no activated memories or no history at all, set the EV to the default value
-            self.EVs[option] = self.condition_initialization[self.condition]
+        c = torch.pow(3.0, self.t) - 1.0     # (B, 1)
+        x_norm = x - x.min(dim=1, keepdim=True).values
+        logits = torch.clamp(c * x_norm, max=700.0)
+        exp_logits = torch.exp(logits)
+        probs = exp_logits / exp_logits.sum(dim=1, keepdim=True)
+        probs = torch.clamp(probs, 1e-64, 1.0 - 1e-64)
+        return probs.cpu().numpy()
 
     def determine_alt_option(self, choiceset, chosen):
         """
@@ -750,29 +681,6 @@ class ComputationalModels:
         self.EVs[chosen] += reward
         self.EVs = np.asarray(self.EVs) * (1 - self.a)
 
-    def ACTR_update(self, chosen, reward, trial, choiceset=None):
-
-        self.reward_history.append(reward)
-        self.choice_history.append(chosen)
-
-        # Update the appearance and reward history for the current combination
-        current_trial = len(self.choice_history)
-        self.chosen_history[chosen].append(current_trial)
-        self.reward_history_by_option[chosen].append(reward)
-
-        # determine the alternative option
-        alt_option = self.determine_alt_option(choiceset, chosen)
-
-        # Calculate activation levels for previous occurrences of the current combination
-        activations, corresponding_rewards = self.activation_calculation(chosen, current_trial,
-                                                                         exclude_current_trial=True)
-        alt_activations, alt_corresponding_rewards = self.activation_calculation(alt_option, current_trial,
-                                                                                 exclude_current_trial=False)
-
-        # Calculate probabilities using softmax rule if there are valid activations and update EVs
-        self.EV_calculation(chosen, corresponding_rewards, activations)
-        self.EV_calculation(alt_option, alt_corresponding_rewards, alt_activations)
-
     def update(self, chosen, reward, trial, choiceset=None):
         """
         Update EVs based on the choice, received reward, and trial number.
@@ -811,11 +719,9 @@ class ComputationalModels:
 
             self.reset()
 
-            self.s = np.random.uniform(0.0001, 0.9999) if self.model_type == 'ACTR_Ori' else None
             self.t = np.random.uniform(0, 4.9999)
             self.a = np.random.uniform()  # Randomly set decay parameter between 0 and 1
             self.b = np.random.uniform(beta_lower, beta_upper) if self.num_params == 3 else self.a
-            self.tau = np.random.uniform(-1.9999, -0.0001) if self.model_type in ('ACTR', 'ACTR_Ori') else None
             self.lamda = np.random.uniform(0.0001, 0.9999) if self.model_type == 'mean_var_utility' else None
             self.choices_count = np.zeros(self.num_options)
 
@@ -876,33 +782,6 @@ class ComputationalModels:
     # Now we define the negative log likelihood function for the ACT-R model because it requires updating EVs before
     # calculating the likelihood
     # ==================================================================================================================
-    def ACTR_nll(self, reward, choice, trial, choiceset=None):
-
-        nll = 0
-
-        for r, cs, ch, t in zip(reward, choiceset, choice, trial):
-
-            # if the trial is not a training trial, we skip the update
-            if t % self.num_exp_restart > self.num_training_trials:
-                self.final_EVs = self.EVs.copy()
-                pass
-            else:
-                # Otherwise, we update the model
-                # in the ACTR model, we need to update the EVs before calculating the likelihood
-                self.update(ch, r, t, cs)
-
-            cs_mapped = self.choiceset_mapping[0][cs]
-            prob_choice = self.softmax_mapping[self.model_type](np.array([self.EVs[cs_mapped[0]],
-                                                                          self.EVs[cs_mapped[1]]]))[0]
-            prob_choice_alt = self.softmax_mapping[self.model_type](np.array([self.EVs[cs_mapped[1]],
-                                                                              self.EVs[cs_mapped[0]]]))[0]
-            nll += -np.log(max(self.epsilon, prob_choice if ch == cs_mapped[0] else prob_choice_alt))
-
-            if t % self.num_exp_restart == 0:
-                self.reset()
-
-        return nll
-
     def WSLS_nll(self, reward, choice, trial, choiceset=None):
 
         nll = 0
@@ -1341,11 +1220,9 @@ class ComputationalModels:
             random_idx = random.randint(0, len(fitting_result) - 1)
             self.t = parameter_sequences[0][random_idx]
 
-            self.s = parameter_sequences[0][random_idx] if self.model_type == 'ACTR_Ori' else None
             self.t = parameter_sequences[0][random_idx]
             self.a = parameter_sequences[1][random_idx]
             self.b = parameter_sequences[2][random_idx] if num_parameters == 3 else self.a
-            self.tau = parameter_sequences[2][random_idx] if self.model_type in ('ACTR', 'ACTR_Ori') else None
             self.lamda = parameter_sequences[2][random_idx] if self.model_type == 'mean_var_utility' else None
 
             self.reset()
@@ -1382,12 +1259,10 @@ class ComputationalModels:
 
             all_results.append({
                 "Subnum": n + 1,
-                "s": self.s,
                 "t": self.t,
                 "a": self.a,
                 "b": self.b,
                 "lamda": self.lamda if self.model_type == 'mean_var_utility' else None,
-                "tau": self.tau if self.model_type in ('ACTR', 'ACTR_Ori') else None,
                 "trial_indices": trial_indices,
                 "trial_details": trial_details
             })
@@ -1401,7 +1276,6 @@ class ComputationalModels:
             a = result["a"]
             b = result["b"]
             lamda = result["lamda"] if self.model_type == 'mean_var_utility' else None
-            tau = result["tau"] if self.model_type == 'ACTR' else None
 
             for trial_idx, trial_detail in zip(result['trial_indices'], result['trial_details']):
                 var = {
@@ -1412,7 +1286,6 @@ class ComputationalModels:
                     "a": a,
                     "b": b,
                     "lamda": lamda,
-                    "tau": tau,
                     "pair": trial_detail['pair'],
                     "choice": trial_detail['choice'],
                     "reward": trial_detail['reward'],
