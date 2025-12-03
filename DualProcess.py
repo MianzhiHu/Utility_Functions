@@ -13,6 +13,29 @@ from concurrent.futures import ProcessPoolExecutor
 # When the variance of the underlying reward distribution is small, the Gaussian process (average) dominates the
 # decision-making process, whereas when the variance is large, the Dirichlet process (frequency) dominates.
 
+MODEL_BOUNDS = {
+    # 2-parameter models
+    'Dir': [(0.0001, 4.9999), (0.0001, 0.9999)],
+    'Gau': [(0.0001, 4.9999), (0.0001, 0.9999)],
+    'Dual_Binary_Recency': [(0.0001, 4.9999), (0.0001, 0.9999)],
+    'Dual_Binary_DisEntropy': [(0.0001, 4.9999), (0.0001, 0.9999)],
+    'Dual_Weight_ChoiceEntropy': [(0.0001, 4.9999), (0.0001, 0.9999)],
+    'Dual_Weight_DisEntropy': [(0.0001, 4.9999), (0.0001, 0.9999)],
+
+    # 3-parameter models
+    'Dual_Process': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999)],
+    'Dual_Process_Visual': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999)],
+    'Dual_Weight':  [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999)],
+
+    # 4-parameter variants
+    'Dual_Process_t2': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999)],
+    'Dual_Process_Sensitivity': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 3.9999)]
+}
+
+
+def random_initial_guess(bounds):
+    return [np.random.uniform(low, high) for (low, high) in bounds]
+
 
 def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_iterations=1000):
     print(f"Fitting participant {participant_id}...")
@@ -40,22 +63,8 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
         print('Participant {} - Iteration [{}/{}]'.format(participant_id, model.iteration,
                                                           num_iterations))
 
-        if model_type in ('Dir', 'Gau', 'Dual_Binary_Recency', 'Dual_Binary_DisEntropy', 'Dual_Weight_ChoiceEntropy',
-                          'Dual_Weight_DisEntropy'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
-            bounds = [(0.0001, 4.9999), (0.0001, 0.9999)]
-        elif model_type in ('Dual_Process', 'Dual_Weight'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999)]
-            bounds = [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999)]
-        elif model_type in ('Dual_Process_t2'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
-            bounds = [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999)]
-        elif model_type == 'Dual_Process_Sensitivity':
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 3.9999)]
-            bounds = [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 3.9999)]
+        bounds = MODEL_BOUNDS[model_type]
+        initial_guess = random_initial_guess(bounds)
 
         if task == 'ABCD':
             result = minimize(model.negative_log_likelihood, initial_guess,
@@ -184,6 +193,7 @@ class DualProcessModel:
             'Dual_Weight_ChoiceEntropy': {'t': 0, 'a': 1},
             'Dual_Weight_DisEntropy': {'t': 0, 'a': 1},
             'Dual_Process': {'t': 0, 'a': 1, 'weight': 2},
+            'Dual_Process_Visual': {'t': 0, 'a': 1, 'weight': 2},
             'Dual_Process_t2': {'t': 0, 'a': 1, 'weight': 2, 't2': 3},
             'Dual_Process_Sensitivity': {'t': 0, 'a': 1, 'weight': 2, 'tau': 3}
         }
@@ -227,11 +237,14 @@ class DualProcessModel:
             'Dual_Weight_ChoiceEntropy': self.dual_weight_choice_entropy_nll,
             'Dual_Weight_DisEntropy': self.dual_weight_dis_entropy_nll,
             'Dual_Process': self.dual_process_nll,
+            'Dual_Process_Visual': self.dual_process_visual_nll,
             'Dual_Process_t2': self.dual_process_nll,
             'Dual_Process_Sensitivity': self.dual_process_sensitivity_nll
         }
 
         self.IGT_SGT_model_mapping = {
+            'Dual_Process': self.dual_process_igt_sgt_nll,
+            'Dual_Process_Visual': self.dual_process_visual_nll,
             'Dual_Process_t2': self.dual_process_igt_sgt_nll,
             'Dual_Process_Sensitivity': self.dual_process_sensitivity_igt_sgt_nll
         }
@@ -277,6 +290,7 @@ class DualProcessModel:
         self.Dir_fun_customized = {
             'Normal': self.Dir_update,
             'Linear_Recency': self.Dir_update_with_linear_recency,
+            'Linear_Recency_VS': self.Dir_update_with_linear_recency_VS,
             'Exp_Recency': self.Dir_update_with_exp_recency
         }
 
@@ -426,6 +440,10 @@ class DualProcessModel:
     def Dir_update_with_linear_recency(self, chosen, reward, AV_total):
         self.alpha = [np.clip(i * (1 - self.a), self.a_min, 9999) for i in self.alpha]
         self.alpha[chosen] += (reward > AV_total)
+
+    def Dir_update_with_linear_recency_VS(self, chosen, reward, AV_total):
+        self.alpha = [np.clip(i * (1 - self.a), self.a_min, 9999) for i in self.alpha]
+        self.alpha[chosen] += (reward < AV_total)
 
     def Dir_update_with_exp_recency(self, chosen, reward, AV_total):
         self.alpha = [np.clip(i ** (1 - self.a), self.a_min, 9999) for i in self.alpha]
@@ -1345,6 +1363,53 @@ class DualProcessModel:
                 continue
 
             # if the trial the starting trial of a new experiment, we initialize the model
+            if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
+                self.model_initialization(reward, choice, trial, t-2)
+                continue
+
+            # if the trial is not a training trial, we skip the update
+            if t % self.num_exp_restart > self.num_training_trials:
+                continue
+
+            self.update(ch, r, t)
+
+        return nll
+
+    def dual_process_visual_nll(self, reward, choiceset, choice, trial):
+
+        nll = 0
+
+        self.weight_history = []
+        self.obj_weight_history = []
+
+        for r, ch, t in zip(reward, choice, trial):
+
+            trial_cov = np.diag(self.var)
+
+            gau_entropy = 2 ** (multivariate_normal.entropy(-self.AV, trial_cov))
+
+            dir_entropy = 2 ** (dirichlet.entropy(self.alpha))
+
+            obj_weight = gau_entropy / (dir_entropy + gau_entropy)
+            weight_dir = (self.weight * obj_weight) / (self.weight * obj_weight + (1 - self.weight) * (1 - obj_weight))
+
+            self.obj_weight_history.append(obj_weight)
+            self.weight_history.append(weight_dir)
+
+            dir_prob = self.action_selection_Dir(np.array(self.EV_Dir), self.t)[ch]
+            gau_prob = self.action_selection_Gau(-np.array(self.EV_Gau), self.t)[ch]
+
+            prob_choice = EV_calculation(dir_prob, gau_prob, weight_dir)
+
+            nll += -np.log(max(self.epsilon, prob_choice))
+
+            # if the experiment is restarted, we reset the model
+            if t % self.num_exp_restart == 0:
+                self.final_Gau_EVs = self.EV_Gau.copy()
+                self.final_Dir_EVs = self.EV_Dir.copy()
+                self.restart_experiment()
+                continue
+
             if t % self.num_exp_restart == 1 and self.model_initialization not in [self.fixed_init]:
                 self.model_initialization(reward, choice, trial, t-2)
                 continue

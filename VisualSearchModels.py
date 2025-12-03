@@ -14,6 +14,73 @@ from docx.shared import Inches
 from docx.enum.text import WD_COLOR_INDEX
 
 
+MODEL_BOUNDS = {
+    # 2-parameter RL models
+    'decay': [(0.0001, 4.9999), (0.0001, 0.9999)],
+    'delta': [(0.0001, 4.9999), (0.0001, 0.9999)],
+    'decay_choice': [(0.0001, 4.9999), (0.0001, 0.9999)],
+    'decay_win': [(0.0001, 4.9999), (0.0001, 0.9999)],
+    'delta_RPUT': [(0.0001, 4.9999), (0.0001, 0.9999)],
+    'decay_RPUT': [(0.0001, 4.9999), (0.0001, 0.9999)],
+
+    # 3-param RL
+    'delta_perseveration': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 9.9999)],
+
+    # PVL family
+    'delta_PVL': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999)],
+    'delta_PVL_relative': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999)],
+    'decay_PVL_relative': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999)],
+
+    # asymmetric delta
+    'delta_asymmetric': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999)],
+
+    # mean–variance utility model
+    'mean_var_utility': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 123.9999)],
+
+    # ACT-R
+    'ACTR': [(0.0001, 4.9999), (0.0001, 0.9999), (-1.9999, -0.0001)],
+    'ACTR_Ori': [(0.0001, 0.9999), (0.0001, 0.9999), (-1.9999, -0.0001)],
+
+    # WSLS
+    'WSLS': [(0.0001, 0.9999), (0.0001, 0.9999)],
+    'WSLS_delta': [(0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999)],
+    'WSLS_delta_weight': [(0.0001, 4.9999), (0.0001, 0.9999),
+                          (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999)],
+    'WSLS_decay_weight': [(0.0001, 4.9999), (0.0001, 0.9999),
+                          (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999)],
+
+    # RT models
+    'RT_exp_basic': [(0.0001, 4.9999), (0.0, 0.01), (0.3000, 23.9999)],
+    'RT_delta': [(0.0001, 4.9999), (0.0001, 0.9999), (0.3000, 23.9999)],
+    'RT_decay': [(0.0001, 4.9999), (0.0001, 4.9999), (0.3000, 23.9999)],
+    'RT_exp_delta': [(0.0001, 4.9999), (0.0001, 0.9999),
+                     (0.3000, 23.9999), (0.0, 0.01)],
+    'RT_delta_PVL': [(0.0001, 4.9999), (0.0001, 0.9999),
+                     (0.3000, 23.9999), (0.0001, 0.9999), (0.0001, 4.9999)],
+    'RT_decay_PVL': [(0.0001, 4.9999), (0.0001, 4.9999),
+                     (0.3000, 23.9999), (0.0001, 0.9999), (0.0001, 4.9999)],
+
+    # hybrid models
+    'hybrid_delta_delta': [(0.0001, 4.9999), (0.0001, 0.9999),
+                           (0.3000, 23.9999), (0.0001, 0.9999)],
+    'hybrid_decay_delta': [(0.0001, 4.9999), (0.0001, 0.9999),
+                           (0.3000, 23.9999), (0.0001, 0.9999)],
+    'hybrid_decay_decay': [(0.0001, 4.9999), (0.0001, 0.9999),
+                           (0.3000, 23.9999), (0.0001, 0.9999)],
+
+    'hybrid_delta_delta_3': [(0.0001, 4.9999), (0.0001, 0.9999),
+                             (0.0001, 0.9999), (0.3000, 23.9999), (0.0001, 0.9999)],
+    'hybrid_decay_delta_3': [(0.0001, 4.9999), (0.0001, 0.9999),
+                             (0.0001, 0.9999), (0.3000, 23.9999), (0.0001, 0.9999)],
+    'hybrid_decay_decay_3': [(0.0001, 4.9999), (0.0001, 0.9999),
+                             (0.0001, 0.9999), (0.3000, 23.9999), (0.0001, 0.9999)],
+}
+
+
+def random_initial_guess(bounds):
+    return [np.random.uniform(low, high) for (low, high) in bounds]
+
+
 def fit_participant(model, participant_id, pdata, model_type, num_iterations=100,
                     beta_lower=-1, beta_upper=1):
     print(f"Fitting participant {participant_id}...")
@@ -35,98 +102,10 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
         print('Participant {} - Iteration [{}/{}]'.format(participant_id, model.iteration,
                                                           num_iterations))
 
-        if model_type in ('decay', 'delta', 'decay_choice', 'decay_win', 'delta_RPUT', 'decay_RPUT'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999))
-        elif model_type in ('delta_perseveration'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 9.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 9.9999))
-        elif model_type in ('delta_PVL', 'delta_PVL_relative', 'decay_PVL_relative'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 4.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999))
-        elif model_type in ('decay_fre'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(beta_lower, beta_upper)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (beta_lower, beta_upper))
-        elif model_type in ('delta_asymmetric'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999))
-        elif model_type in ('mean_var_utility'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 123.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 123.9999))
-        elif model_type in ('delta_decay', 'sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV'):
-            if model.num_params == 2:
-                initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999)]
-                bounds = ((0.0001, 4.9999), (0.0001, 0.9999))
-            elif model.num_params == 3:
-                initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                                 np.random.uniform(0.0001, 0.9999)]
-                bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999))
-        elif model_type == 'ACTR':
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(-1.9999, -0.0001)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (-1.9999, -0.0001))
-        elif model_type == 'ACTR_Ori':
-            initial_guess = [np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(-1.9999, -0.0001)]
-            bounds = ((0.0001, 0.9999), (0.0001, 0.9999), (-1.9999, -0.0001))
-        elif model_type == 'WSLS':
-            initial_guess = [np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999)]
-            bounds = ((0.0001, 0.9999), (0.0001, 0.9999))
-        elif model_type == 'WSLS_delta':
-            initial_guess = [np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999)]
-            bounds = ((0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999))
-        elif model_type in ('WSLS_delta_weight', 'WSLS_decay_weight'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999))
-        elif model_type == 'RT_exp_basic':
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0, 0.01),
-                             np.random.uniform(0.3000, 23.9999)]
-            bounds = ((0.0001, 4.9999), (0.0, 0.01), (0.3000, 23.9999))
-        elif model_type in ('RT_delta'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.3000, 23.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.3000, 23.9999))
-        elif model_type in ('RT_decay'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 4.9999),
-                             np.random.uniform(0.3000, 23.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 4.9999), (0.3000, 23.9999))
-        elif model_type in ('RT_exp_delta'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.3000, 23.9999), np.random.uniform(0.0, 0.01)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.3000, 23.9999), (0.0, 0.01))
-        elif model_type in ('RT_delta_PVL'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.3000, 23.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 4.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.3000, 23.9999), (0.0001, 0.9999), (0.0001, 4.9999))
-        elif model_type in ('RT_decay_PVL'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 4.9999),
-                             np.random.uniform(0.3000, 23.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 4.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.3000, 23.9999), (0.0001, 0.9999), (0.0001, 4.9999))
-        elif model_type in ('hybrid_delta_delta', 'hybrid_decay_delta', 'hybrid_decay_decay'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.3000, 23.9999), np.random.uniform(0.0001, 0.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.3000, 23.9999), (0.0001, 0.9999))
-        elif model_type in ('hybrid_delta_delta_3', 'hybrid_decay_delta_3', 'hybrid_decay_decay_3'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.3000, 23.9999),
-                             np.random.uniform(0.0001, 0.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.3000, 23.9999), (0.0001, 0.9999))
-        elif model_type in ('hybrid_WSLS_delta'):
-            initial_guess = [np.random.uniform(0.0001, 4.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.0001, 0.9999), np.random.uniform(0.0001, 0.9999),
-                             np.random.uniform(0.3000, 23.9999), np.random.uniform(0.0001, 0.9999)]
-            bounds = ((0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.3000, 23.9999),
-                      (0.0001, 0.9999))
+        bounds = MODEL_BOUNDS[model_type]
+
+        # generate initial guesses from dictionary bounds
+        initial_guess = random_initial_guess(bounds)
 
         result = minimize(model.negative_log_likelihood, initial_guess,
                           args=(pdata['reward'], pdata['choice'], pdata['react_time']),
