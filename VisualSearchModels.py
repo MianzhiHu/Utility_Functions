@@ -22,11 +22,11 @@ MODEL_BOUNDS = {
     'decay_win': [(0.0001, 4.9999), (0.0001, 0.9999)],
     'delta_RPUT': [(0.0001, 4.9999), (0.0001, 0.9999)],
     'decay_RPUT': [(0.0001, 4.9999), (0.0001, 0.9999)],
-    'delta_RPUT_unc': [(0.0001, 4.9999), (0.0001, 0.9999), (-9.9999, 9.9999)],
-    'decay_RPUT_unc': [(0.0001, 4.9999), (0.0001, 0.9999), (-9.9999, 9.9999)],
+    'delta_RPUT_unc': [(0.0001, 4.9999), (0.0001, 0.9999), (-100, 100)],
+    'decay_RPUT_unc': [(0.0001, 4.9999), (0.0001, 0.9999), (-100, 100)],
     'delta_perseveration': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 9.9999)],
-    'delta_uncertainty': [(0.0001, 4.9999), (0.0001, 0.9999), (-10, 10)],
-    'decay_uncertainty': [(0.0001, 4.9999), (0.0001, 0.9999), (-10, 10)],
+    'delta_uncertainty': [(0.0001, 4.9999), (0.0001, 0.9999), (-100, 100)],
+    'decay_uncertainty': [(0.0001, 4.9999), (0.0001, 0.9999), (-100, 100)],
 
     # PVL family
     'delta_PVL': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999)],
@@ -37,8 +37,10 @@ MODEL_BOUNDS = {
     'delta_asymmetric': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999)],
 
     # mean–variance utility model
-    'mean_var_delta': [(0.0001, 4.9999), (0.0001, 0.9999), (-10, 10)],
-    'mean_var_decay': [(0.0001, 4.9999), (0.0001, 0.9999), (-10, 10)],
+    'mean_var': [(0.0001, 4.9999), (-100, 100)],
+    'mean_var_delta': [(0.0001, 4.9999), (0.0001, 0.9999), (-100, 100)],
+    'mean_var_decay': [(0.0001, 4.9999), (0.0001, 0.9999), (-100, 100)],
+    'mean_var_unc': [(0.0001, 4.9999), (0.0001, 0.9999), (-100, 100)],
     'kalman_filter': [(0.0001, 4.9999), (0.0001, 0.9999)],
 
     # ACT-R
@@ -195,8 +197,10 @@ class VisualSearchModels:
             'decay_RPUT_unc': {'t': 0, 'a': 1, 'lamda': 2},
             'decay_uncertainty': {'t': 0, 'a': 1, 'lamda': 2},
             'delta_decay': {'t': 0, 'a': 1, 'b': 2},
+            'mean_var': {'t': 0, 'lamda': 1},
             'mean_var_delta': {'t': 0, 'a': 1, 'lamda': 2},
             'mean_var_decay': {'t': 0, 'a': 1, 'lamda': 2},
+            'mean_var_unc': {'t': 0, 'a': 1, 'lamda': 2},
             'kalman_filter': {'t': 0, 'var_initial': 1},
             'sampler_decay': {'t': 0, 'a': 1},
             'sampler_decay_PE': {'t': 0, 'a': 1},
@@ -271,8 +275,10 @@ class VisualSearchModels:
             'decay_RPUT_unc': self.decay_reward_RPUT_unc_update,
             'decay_uncertainty': self.decay_uncertainty_update,
             'delta_decay': self.delta_update,
+            'mean_var': self.mean_var_update,
             'mean_var_delta': self.mean_var_delta_update,
             'mean_var_decay': self.mean_var_decay_update,
+            'mean_var_unc': self.mean_var_decay_unc_update,
             'kalman_filter': self.kalman_filter_update,
             'sampler_decay': self.sampler_decay_update,
             'sampler_decay_PE': self.sampler_decay_PE_update,
@@ -317,8 +323,10 @@ class VisualSearchModels:
             'decay_RPUT_unc': self.standard_nll,
             'decay_uncertainty': self.standard_nll,
             'delta_decay': self.standard_nll,
+            'mean_var': self.standard_nll,
             'mean_var_delta': self.standard_nll,
             'mean_var_decay': self.standard_nll,
+            'mean_var_unc': self.standard_nll,
             'kalman_filter': self.standard_nll,
             'sampler_decay': self.standard_nll,
             'sampler_decay_PE': self.standard_nll,
@@ -493,18 +501,34 @@ class VisualSearchModels:
         self.EVs = self.EVs * (1 - self.b)
         self.EVs[chosen] += self.a * prediction_error
 
+    def mean_var_update(self, chosen, reward, rt, trial):
+        # no alpha, just average
+        prediction_error = reward - self.mean[chosen]
+        self.mean[chosen] += prediction_error / np.clip(self.choices_count[chosen], 1, 9999)
+        self.var[chosen] += (prediction_error ** 2 - self.var[chosen]) / np.clip(self.choices_count[chosen], 1, 9999)
+        self.EVs[chosen] = self.mean[chosen] - (0.5 * self.lamda * self.var[chosen])
+
     def mean_var_delta_update(self, chosen, reward, rt, trial):
         prediction_error = reward - self.mean[chosen]
         self.mean[chosen] += self.a * prediction_error
         self.var[chosen] += self.a * (prediction_error ** 2 - self.var[chosen])
-        self.EVs[chosen] = self.mean[chosen] - (self.lamda * self.var[chosen]) / 2
+        self.EVs[chosen] = self.mean[chosen] - (0.5 * self.lamda * self.var[chosen])
 
     def mean_var_decay_update(self, chosen, reward, rt, trial):
         self.mean = self.mean * (1 - self.a)
         self.var = self.var * (1 - self.a)
         self.var[chosen] += (reward - self.mean[chosen]) ** 2
         self.mean[chosen] += reward
-        self.EVs = self.mean - (self.lamda * self.var) / 2
+        self.EVs = self.mean - (0.5 * self.lamda * self.var)
+
+    def mean_var_decay_unc_update(self, chosen, reward, rt, trial):
+        self.mean = self.mean * (1 - self.a)
+        self.var = self.var * (1 - self.a)
+        self.var[chosen] += (reward - self.mean[chosen]) ** 2
+        uncertainty = [(self.var[x] / np.clip(self.choices_count[x], 1, 9999)) for x in range(self.num_options)]
+        self.mean[chosen] += reward
+        self.EVs = self.mean - (0.5 * self.lamda * np.array(uncertainty))
+
 
     def kalman_filter_update(self, chosen, reward, rt, trial):
         prediction_error = reward - self.EVs[chosen]
