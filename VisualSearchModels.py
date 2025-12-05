@@ -22,9 +22,11 @@ MODEL_BOUNDS = {
     'decay_win': [(0.0001, 4.9999), (0.0001, 0.9999)],
     'delta_RPUT': [(0.0001, 4.9999), (0.0001, 0.9999)],
     'decay_RPUT': [(0.0001, 4.9999), (0.0001, 0.9999)],
-
-    # 3-param RL
+    'delta_RPUT_unc': [(0.0001, 4.9999), (0.0001, 0.9999), (-9.9999, 9.9999)],
+    'decay_RPUT_unc': [(0.0001, 4.9999), (0.0001, 0.9999), (-9.9999, 9.9999)],
     'delta_perseveration': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 9.9999)],
+    'delta_uncertainty': [(0.0001, 4.9999), (0.0001, 0.9999), (-10, 10)],
+    'decay_uncertainty': [(0.0001, 4.9999), (0.0001, 0.9999), (-10, 10)],
 
     # PVL family
     'delta_PVL': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999)],
@@ -35,7 +37,9 @@ MODEL_BOUNDS = {
     'delta_asymmetric': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999)],
 
     # mean–variance utility model
-    'mean_var_utility': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 123.9999)],
+    'mean_var_delta': [(0.0001, 4.9999), (0.0001, 0.9999), (-10, 10)],
+    'mean_var_decay': [(0.0001, 4.9999), (0.0001, 0.9999), (-10, 10)],
+    'kalman_filter': [(0.0001, 4.9999), (0.0001, 0.9999)],
 
     # ACT-R
     'ACTR': [(0.0001, 4.9999), (0.0001, 0.9999), (-1.9999, -0.0001)],
@@ -178,16 +182,22 @@ class VisualSearchModels:
             'delta_perseveration': {'t': 0, 'a': 1, 'b': 2},
             'delta_asymmetric': {'t': 0, 'a': 1, 'b': 2},
             'delta_RPUT': {'t': 0, 'a': 1},
+            'delta_RPUT_unc': {'t': 0, 'a': 1, 'lamda': 2},
             'delta_PVL': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
             'delta_PVL_relative': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
+            'delta_uncertainty': {'t': 0, 'a': 1, 'lamda': 2},
             'decay': {'t': 0, 'a': 1},
             'decay_fre': {'t': 0, 'a': 1, 'b': 2},
             'decay_PVL_relative': {'t': 0, 'a': 1, 'b': 2, 'lamda': 3},
             'decay_choice': {'t': 0, 'a': 1},
             'decay_win': {'t': 0, 'a': 1},
             'decay_RPUT': {'t': 0, 'a': 1},
+            'decay_RPUT_unc': {'t': 0, 'a': 1, 'lamda': 2},
+            'decay_uncertainty': {'t': 0, 'a': 1, 'lamda': 2},
             'delta_decay': {'t': 0, 'a': 1, 'b': 2},
-            'mean_var_utility': {'t': 0, 'a': 1, 'lamda': 2},
+            'mean_var_delta': {'t': 0, 'a': 1, 'lamda': 2},
+            'mean_var_decay': {'t': 0, 'a': 1, 'lamda': 2},
+            'kalman_filter': {'t': 0, 'var_initial': 1},
             'sampler_decay': {'t': 0, 'a': 1},
             'sampler_decay_PE': {'t': 0, 'a': 1},
             'sampler_decay_AV': {'t': 0, 'a': 1},
@@ -215,7 +225,7 @@ class VisualSearchModels:
         self._DEFAULT_ATTRS = [
             'RT_initial_suboptimal', 'RT_initial_optimal', 'RT_initial',
             'k', 's', 't', 'a', 'b', 'tau', 'lamda',
-            'p_ws', 'p_ls', 'w',
+            'p_ws', 'p_ls', 'w', 'var_initial', 'unc'
         ]
 
         # initialize default b overrides
@@ -248,16 +258,22 @@ class VisualSearchModels:
             'delta_perseveration': self.delta_perseveration_update,
             'delta_asymmetric': self.delta_asymmetric_update,
             'delta_RPUT': self.delta_reward_per_RT_update,
+            'delta_RPUT_unc': self.delta_reward_RPUT_unc_update,
             'delta_PVL': self.delta_PVL_update,
             'delta_PVL_relative': self.delta_PVL_relative_update,
+            'delta_uncertainty': self.delta_uncertainty_update,
             'decay': self.decay_update,
             'decay_fre': self.decay_fre_update,
             'decay_PVL_relative': self.decay_PVL_relative_update,
             'decay_choice': self.decay_choice_update,
             'decay_win': self.decay_win_update,
             'decay_RPUT': self.decay_reward_per_RT_update,
+            'decay_RPUT_unc': self.decay_reward_RPUT_unc_update,
+            'decay_uncertainty': self.decay_uncertainty_update,
             'delta_decay': self.delta_update,
-            'mean_var_utility': self.mean_var_utility,
+            'mean_var_delta': self.mean_var_delta_update,
+            'mean_var_decay': self.mean_var_decay_update,
+            'kalman_filter': self.kalman_filter_update,
             'sampler_decay': self.sampler_decay_update,
             'sampler_decay_PE': self.sampler_decay_PE_update,
             'sampler_decay_AV': self.sampler_decay_AV_update,
@@ -288,16 +304,22 @@ class VisualSearchModels:
             'delta_perseveration': self.standard_nll,
             'delta_asymmetric': self.standard_nll,
             'delta_RPUT': self.standard_nll,
+            'delta_RPUT_unc': self.standard_nll,
             'delta_PVL': self.standard_nll,
             'delta_PVL_relative': self.standard_nll,
+            'delta_uncertainty': self.standard_nll,
             'decay': self.standard_nll,
             'decay_fre': self.standard_nll,
             'decay_PVL_relative': self.standard_nll,
             'decay_choice': self.standard_nll,
             'decay_win': self.standard_nll,
             'decay_RPUT': self.standard_nll,
+            'decay_RPUT_unc': self.standard_nll,
+            'decay_uncertainty': self.standard_nll,
             'delta_decay': self.standard_nll,
-            'mean_var_utility': self.standard_nll,
+            'mean_var_delta': self.standard_nll,
+            'mean_var_decay': self.standard_nll,
+            'kalman_filter': self.standard_nll,
             'sampler_decay': self.standard_nll,
             'sampler_decay_PE': self.standard_nll,
             'sampler_decay_AV': self.standard_nll,
@@ -341,7 +363,7 @@ class VisualSearchModels:
         self.AV = np.mean(self.initial_EV)
         self.RT_AV = np.mean(self.initial_RT)
         self.mean = self.initial_EV.copy()
-        self.var = np.full(self.num_options, 1 / 12)
+        self.var = np.full(self.num_options, self.var_initial if self.var_initial is not None else 1 / 12)
 
     def softmax(self, x):
         c = 3 ** self.t - 1
@@ -396,6 +418,13 @@ class VisualSearchModels:
         prediction_error = reward_per_RT - self.EVs[chosen]
         self.EVs[chosen] += self.a * prediction_error
 
+    def delta_reward_RPUT_unc_update(self, chosen, reward, rt, trial):
+        reward_per_RT = reward / np.clip(rt, 0.0001, None)  # Avoid division by zero
+        prediction_error = reward_per_RT - self.mean[chosen]
+        self.mean[chosen] += self.a * prediction_error
+        self.var[chosen] += self.a * (prediction_error ** 2 - self.var[chosen])
+        self.EVs[chosen] = self.mean[chosen] - (self.lamda * self.var[chosen]) / 2
+
     def delta_PVL_update(self, chosen, reward, rt, trial):
         utility = (np.abs(reward) ** self.b) * (reward >= 0) + (-self.lamda * (np.abs(reward) ** self.b)) * (reward < 0)
         prediction_error = utility - self.EVs[chosen]
@@ -407,6 +436,11 @@ class VisualSearchModels:
         prediction_error = utility - self.EVs[chosen]
         self.EVs[chosen] += self.a * prediction_error
         self.AV += self.a * reward_diff
+
+    def delta_uncertainty_update(self, chosen, reward, rt, trial):
+        prediction_error = reward - self.EVs[chosen]
+        self.var += self.a * (prediction_error ** 2 - self.var)
+        self.EVs[chosen] += self.a * (prediction_error - self.lamda * self.var[chosen])
 
     def decay_update(self, chosen, reward, rt, trial):
         self.EVs = self.EVs * (1 - self.a)
@@ -434,22 +468,53 @@ class VisualSearchModels:
         self.EVs = [x * (1 - self.a) for x in self.EVs]
         self.EVs[chosen] += reward_per_RT
 
+    def decay_reward_RPUT_unc_update(self, chosen, reward, rt, trial):
+        reward_per_RT = reward / np.clip(rt, 0.0001, None)  # Avoid division by zero
+        self.mean = self.mean * (1 - self.a)
+        self.var = self.var * (1 - self.a)
+        self.var[chosen] += (reward_per_RT - self.mean[chosen]) ** 2
+        self.mean[chosen] += reward_per_RT
+        self.EVs = self.mean - (self.lamda * self.var) / 2
+
     def decay_win_update(self, chosen, reward, rt, trial):
         prediction_error = reward - self.AV
         self.AV += prediction_error * self.a
         self.EVs = self.EVs * (1 - self.a)
         self.EVs[chosen] += (prediction_error > 0)
 
+    def decay_uncertainty_update(self, chosen, reward, rt, trial):
+        self.EVs = self.EVs * (1 - self.a)
+        self.var = self.var * (1 - self.a)
+        self.var[chosen] += (reward - self.EVs[chosen]) ** 2
+        self.EVs[chosen] += reward - self.lamda * self.var[chosen]
+
     def delta_decay_update(self, chosen, reward, rt, trial):
         prediction_error = reward - self.EVs[chosen]
         self.EVs = self.EVs * (1 - self.b)
         self.EVs[chosen] += self.a * prediction_error
 
-    def mean_var_utility(self, chosen, reward, rt, trial):
+    def mean_var_delta_update(self, chosen, reward, rt, trial):
         prediction_error = reward - self.mean[chosen]
         self.mean[chosen] += self.a * prediction_error
         self.var[chosen] += self.a * (prediction_error ** 2 - self.var[chosen])
         self.EVs[chosen] = self.mean[chosen] - (self.lamda * self.var[chosen]) / 2
+
+    def mean_var_decay_update(self, chosen, reward, rt, trial):
+        self.mean = self.mean * (1 - self.a)
+        self.var = self.var * (1 - self.a)
+        self.var[chosen] += (reward - self.mean[chosen]) ** 2
+        self.mean[chosen] += reward
+        self.EVs = self.mean - (self.lamda * self.var) / 2
+
+    def kalman_filter_update(self, chosen, reward, rt, trial):
+        prediction_error = reward - self.EVs[chosen]
+
+        # Kalman Gain
+        kalman_gain = self.var[chosen] / (self.var[chosen] + self.var_initial)
+
+        # Update EV and variance
+        self.var[chosen] = (1 - kalman_gain) * self.var[chosen]
+        self.EVs[chosen] += kalman_gain * prediction_error
 
     def sampler_decay_update(self, chosen, reward, rt, trial):
         """
@@ -703,7 +768,7 @@ class VisualSearchModels:
             self.a = np.random.uniform()  # Randomly set decay parameter between 0 and 1
             self.b = np.random.uniform(beta_lower, beta_upper) if self.num_params == 3 else self.a
             self.tau = np.random.uniform(-1.9999, -0.0001) if self.model_type in ('ACTR', 'ACTR_Ori') else None
-            self.lamda = np.random.uniform(0.0001, 0.9999) if self.model_type == 'mean_var_utility' else None
+            self.lamda = np.random.uniform(0.0001, 0.9999) if self.model_type == 'mean_var_delta' else None
             self.choices_count = np.zeros(self.num_options)
 
             EV_history = np.zeros((num_trials, self.num_options))
@@ -887,7 +952,7 @@ class VisualSearchModels:
         self.AV = EV_trial1
         self.RT_AV = RT_trial1
 
-    def first_trial_init_no_alpha_init(self, reward, choice, react_time, trial):
+    def first_trial_no_alpha_init(self, reward, choice, react_time, trial):
         # Temporarily force alpha=1 so that update adds full PE
         orig_a = self.a
         self.a = 1.0
@@ -899,12 +964,13 @@ class VisualSearchModels:
         self.a = orig_a
 
         # Populate the EVs for the first trial
-        EV_trial1 = self.EVs[choice[0]]
-        RT_trial1 = self.RTs[choice[0]]
-        self.EVs = np.full(self.num_options, EV_trial1)
-        self.RTs = np.full(self.num_options, RT_trial1)
-        self.AV = EV_trial1
-        self.RT_AV = RT_trial1
+        self.EVs = np.full(self.num_options, self.EVs[choice[0]])
+        self.RTs = np.full(self.num_options, self.RTs[choice[0]])
+        self.var = np.full(self.num_options, self.var[choice[0]])
+        self.mean = np.full(self.num_options, self.mean[choice[0]])
+        self.AV = self.EVs[choice[0]]
+        self.RT_AV = self.RTs[choice[0]]
+        self.Probs = np.full(self.num_options, 0.25)
 
     def fit(self, data, num_training_trials=999, num_exp_restart=999, num_iterations=100, initial_EV=None,
             initial_RT=None, initial_mode='fixed', beta_lower=-1, beta_upper=1):
@@ -972,7 +1038,7 @@ class VisualSearchModels:
             self.a = parameter_sequences[1][participant - 1]
             self.b = parameter_sequences[2][participant - 1] if num_parameters == 3 else self.a
             self.tau = parameter_sequences[2][participant - 1] if self.model_type in ('ACTR', 'ACTR_Ori') else None
-            self.lamda = parameter_sequences[2][participant - 1] if self.model_type == 'mean_var_utility' else None
+            self.lamda = parameter_sequences[2][participant - 1] if self.model_type == 'mean_var_delta' else None
 
             for _ in range(num_iterations):
 
@@ -1040,7 +1106,7 @@ class VisualSearchModels:
                     "t": self.t,
                     "a": self.a,
                     "b": self.b,
-                    "lamda": self.lamda if self.model_type == 'mean_var_utility' else None,
+                    "lamda": self.lamda if self.model_type == 'mean_var_delta' else None,
                     "tau": self.tau if self.model_type in ('ACTR', 'ACTR_Ori') else None,
                     "trial_indices": trial_indices,
                     "trial_details": trial_details
@@ -1055,7 +1121,7 @@ class VisualSearchModels:
             t = result["t"]
             a = result["a"]
             b = result["b"]
-            lamda = result["lamda"] if self.model_type == 'mean_var_utility' else None
+            lamda = result["lamda"] if self.model_type == 'mean_var_delta' else None
             tau = result["tau"] if self.model_type == 'ACTR' else None
 
             for trial_idx, trial_detail in zip(result['trial_indices'], result['trial_details']):
@@ -1120,7 +1186,7 @@ class VisualSearchModels:
             self.a = parameter_sequences[1][random_idx]
             self.b = parameter_sequences[2][random_idx] if num_parameters == 3 else self.a
             self.tau = parameter_sequences[2][random_idx] if self.model_type in ('ACTR', 'ACTR_Ori') else None
-            self.lamda = parameter_sequences[2][random_idx] if self.model_type == 'mean_var_utility' else None
+            self.lamda = parameter_sequences[2][random_idx] if self.model_type == 'mean_var_delta' else None
 
             self.reset()
 
@@ -1160,7 +1226,7 @@ class VisualSearchModels:
                 "t": self.t,
                 "a": self.a,
                 "b": self.b,
-                "lamda": self.lamda if self.model_type == 'mean_var_utility' else None,
+                "lamda": self.lamda if self.model_type == 'mean_var_delta' else None,
                 "tau": self.tau if self.model_type in ('ACTR', 'ACTR_Ori') else None,
                 "trial_indices": trial_indices,
                 "trial_details": trial_details
@@ -1174,7 +1240,7 @@ class VisualSearchModels:
             t = result["t"]
             a = result["a"]
             b = result["b"]
-            lamda = result["lamda"] if self.model_type == 'mean_var_utility' else None
+            lamda = result["lamda"] if self.model_type == 'mean_var_delta' else None
             tau = result["tau"] if self.model_type == 'ACTR' else None
 
             for trial_idx, trial_detail in zip(result['trial_indices'], result['trial_details']):
@@ -1255,7 +1321,8 @@ def create_model_summary_df(model_results, criteria='BIC', return_best=False):
         return result
 
 
-def create_model_summary_table(model_results, output_path):
+def create_model_summary_table(model_results, output_path,
+                               group_names=['High-Reward-Optimal', 'Low-Reward-Optimal']):
     # Create model summary dataframe
     model_summary_df = create_model_summary_df(model_results)
 
@@ -1271,66 +1338,60 @@ def create_model_summary_table(model_results, output_path):
     header_cells[4].text = 'N Best Fit'
 
     # Find best models for each group based on BIC
-    group1_data = model_summary_df[model_summary_df['Group'] == 1]
-    group2_data = model_summary_df[model_summary_df['Group'] == 2]
-    best_model1 = group1_data.loc[group1_data['BIC'].idxmin()]
-    best_model2 = group2_data.loc[group2_data['BIC'].idxmin()]
+    best_models = {}
+    n_group = model_summary_df['Group'].nunique()
+    for group in range(1, n_group + 1):
+        group_data = model_summary_df[model_summary_df['Group'] == group]
+        if group_data.empty:
+            continue
+        best_model_row = group_data.loc[group_data['BIC'].idxmin()]
+        best_models[group] = best_model_row
 
-    # Add data rows for Group 1
-    row_cells = table.add_row().cells
-    row_cells[0].text = 'High-Reward-Optimal'
-    row_cells[1].text = ''
-    row_cells[2].text = ''
-    row_cells[3].text = ''
-    row_cells[4].text = ''
+    # Add data rows for each group
+    for group in range(1, n_group + 1):
+        group_data_all = model_summary_df[model_summary_df['Group'] == group]
+        if group_data_all.empty:
+            continue
 
-    for model in model_results.keys():
+        # Group header row
         row_cells = table.add_row().cells
-        row_cells[0].text = ''
-        row_cells[1].text = model
-        group_data = model_summary_df[
-            (model_summary_df['Model'] == model) &
-            (model_summary_df['Group'] == 1)]
-        row_cells[2].text = f"{group_data['AIC'].values[0]:.2f}"
-        row_cells[3].text = f"{group_data['BIC'].values[0]:.2f}"
-        row_cells[4].text = f"{int(group_data['N_Best_Fit'].values[0])}"
+        # Use provided group name if available, otherwise fallback to "Group X"
+        if group - 1 < len(group_names):
+            group_label = group_names[group - 1]
+        else:
+            group_label = f'Group {group}'
+        row_cells[0].text = group_label
+        row_cells[1].text = ''
+        row_cells[2].text = ''
+        row_cells[3].text = ''
+        row_cells[4].text = ''
 
-        # Highlight best model row
-        if model == best_model1['Model']:
-            for cell in row_cells:
-                paragraph = cell.paragraphs[0]
-                run = paragraph.runs[0]
-                run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+        # Rows per model within this group
+        for model in model_results.keys():
+            group_data = model_summary_df[
+                (model_summary_df['Model'] == model) &
+                (model_summary_df['Group'] == group)
+            ]
 
-    # Add data rows for Group 2
-    row_cells = table.add_row().cells
-    row_cells[0].text = 'Low-Reward-Optimal'
-    row_cells[1].text = ''
-    row_cells[2].text = ''
-    row_cells[3].text = ''
-    row_cells[4].text = ''
+            if group_data.empty:
+                continue
 
-    for model in model_results.keys():
-        row_cells = table.add_row().cells
-        row_cells[0].text = ''
-        row_cells[1].text = model
-        group_data = model_summary_df[
-            (model_summary_df['Model'] == model) &
-            (model_summary_df['Group'] == 2)]
-        row_cells[2].text = f"{group_data['AIC'].values[0]:.2f}"
-        row_cells[3].text = f"{group_data['BIC'].values[0]:.2f}"
-        row_cells[4].text = f"{int(group_data['N_Best_Fit'].values[0])}"
+            row_cells = table.add_row().cells
+            row_cells[0].text = ''
+            row_cells[1].text = model
+            row_cells[2].text = f"{group_data['AIC'].values[0]:.2f}"
+            row_cells[3].text = f"{group_data['BIC'].values[0]:.2f}"
+            row_cells[4].text = f"{int(group_data['N_Best_Fit'].values[0])}"
 
-        # Highlight best model row
-        if model == best_model2['Model']:
-            for cell in row_cells:
-                paragraph = cell.paragraphs[0]
-                run = paragraph.runs[0]
-                run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+            # Highlight best model row for this group
+            if group in best_models and model == best_models[group]['Model']:
+                for cell in row_cells:
+                    for paragraph in cell.paragraphs:
+                        for run in paragraph.runs:
+                            run.font.highlight_color = WD_COLOR_INDEX.YELLOW
 
     # Save the document
     doc.save(output_path)
-
 # ======================================================================================================================
 # End of the VisualSearchModels class (Other assistant classes can be found in ComputationalModeling.py)
 # ======================================================================================================================

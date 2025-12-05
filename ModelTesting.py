@@ -45,17 +45,17 @@ if __name__ == "__main__":
 
     # Load the model
     # model = VisualSearchModels(model_type='delta', task='VS', initial_EV=[0, 0], initial_mode='first_trial')
-    # model = VisualSearchModels(model_type='hybrid_decay_decay_3', task='VS')
-    # result = model.fit(testing_data, initial_EV=[0, 0], initial_RT=[0, 0], initial_mode='fixed', num_iterations=1)
+    model = VisualSearchModels(model_type='mean_var_decay')
+    result = model.fit(testing_data, initial_mode='first_trial_no_alpha', num_iterations=1)
 
-    # remove the 'reward' column from testing_data and rename 'reaction_time' to 'reward'
-    testing_data[1].pop("reward", None)
-    testing_data[1]["reward"] = testing_data[1].pop("react_time")
-    model = DualProcessModel(task='IGT_SGT')
-    result = model.fit(testing_data, 'Dual_Process_Visual', Gau_fun='Naive_Recency',
-                                     Dir_fun='Linear_Recency_VS', weight_Dir='softmax', weight_Gau='softmax',
-                                     num_training_trials=999, num_exp_restart=9999, initial_EV=[3.57, 3.57],
-                                     initial_mode='fixed', num_iterations=1)
+    # # remove the 'reward' column from testing_data and rename 'reaction_time' to 'reward'
+    # testing_data[1].pop("reward", None)
+    # testing_data[1]["reward"] = testing_data[1].pop("react_time")
+    # model = DualProcessModel(task='IGT_SGT')
+    # result = model.fit(testing_data, 'Dual_Process_Visual', Gau_fun='Naive_Recency',
+    #                                  Dir_fun='Linear_Recency_VS', weight_Dir='softmax', weight_Gau='softmax',
+    #                                  num_training_trials=999, num_exp_restart=9999, initial_EV=[3.57, 3.57],
+    #                                  initial_mode='fixed', num_iterations=1)
 
     # # ==================================================================================================================
     # # Model Testing for the Sliding Window Model Fitting Approach
