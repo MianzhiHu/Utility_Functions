@@ -45,7 +45,7 @@ if __name__ == "__main__":
 
     # Load the model
     # model = VisualSearchModels(model_type='delta', task='VS', initial_EV=[0, 0], initial_mode='first_trial')
-    model = VisualSearchModels(model_type='mean_var_unc')
+    model = VisualSearchModels(model_type='random')
     result = model.fit(testing_data, initial_mode='first_trial_no_alpha', num_iterations=1)
 
     # # remove the 'reward' column from testing_data and rename 'reaction_time' to 'reward'

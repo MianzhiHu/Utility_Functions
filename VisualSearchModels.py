@@ -22,11 +22,11 @@ MODEL_BOUNDS = {
     'decay_win': [(0.0001, 4.9999), (0.0001, 0.9999)],
     'delta_RPUT': [(0.0001, 4.9999), (0.0001, 0.9999)],
     'decay_RPUT': [(0.0001, 4.9999), (0.0001, 0.9999)],
-    'delta_RPUT_unc': [(0.0001, 4.9999), (0.0001, 0.9999), (-100, 100)],
-    'decay_RPUT_unc': [(0.0001, 4.9999), (0.0001, 0.9999), (-100, 100)],
+    'delta_RPUT_unc': [(0.0001, 4.9999), (0.0001, 0.9999), (-10, 10)],
+    'decay_RPUT_unc': [(0.0001, 4.9999), (0.0001, 0.9999), (-10, 10)],
     'delta_perseveration': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 9.9999)],
-    'delta_uncertainty': [(0.0001, 4.9999), (0.0001, 0.9999), (-100, 100)],
-    'decay_uncertainty': [(0.0001, 4.9999), (0.0001, 0.9999), (-100, 100)],
+    'delta_uncertainty': [(0.0001, 4.9999), (0.0001, 0.9999), (-10, 10)],
+    'decay_uncertainty': [(0.0001, 4.9999), (0.0001, 0.9999), (-10, 10)],
 
     # PVL family
     'delta_PVL': [(0.0001, 4.9999), (0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 4.9999)],
@@ -38,9 +38,9 @@ MODEL_BOUNDS = {
 
     # mean–variance utility model
     'mean_var': [(0.0001, 4.9999), (-100, 100)],
-    'mean_var_delta': [(0.0001, 4.9999), (0.0001, 0.9999), (-100, 100)],
-    'mean_var_decay': [(0.0001, 4.9999), (0.0001, 0.9999), (-100, 100)],
-    'mean_var_unc': [(0.0001, 4.9999), (0.0001, 0.9999), (-100, 100)],
+    'mean_var_delta': [(0.0001, 4.9999), (0.0001, 0.9999), (-10, 10)],
+    'mean_var_decay': [(0.0001, 4.9999), (0.0001, 0.9999), (-10, 10)],
+    'mean_var_unc': [(0.0001, 4.9999), (0.0001, 0.9999), (-10, 10)],
     'kalman_filter': [(0.0001, 4.9999), (0.0001, 0.9999)],
 
     # ACT-R
@@ -48,6 +48,7 @@ MODEL_BOUNDS = {
     'ACTR_Ori': [(0.0001, 0.9999), (0.0001, 0.9999), (-1.9999, -0.0001)],
 
     # WSLS
+    'perseveration': [(0.0001, 0.9999)],
     'WSLS': [(0.0001, 0.9999), (0.0001, 0.9999)],
     'WSLS_delta': [(0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999)],
     'WSLS_delta_weight': [(0.0001, 4.9999), (0.0001, 0.9999),
@@ -207,6 +208,7 @@ class VisualSearchModels:
             'sampler_decay_AV': {'t': 0, 'a': 1},
             'ACTR_Ori': { 'a': 1, 's': 0, 'tau': 2},
             'ACTR': {'t': 0, 'a': 1, 'tau': 2},
+            'perseveration': {'w': 0},
             'WSLS': {'p_ws': 0, 'p_ls': 1},
             'WSLS_delta': {'a': 1, 'p_ws': 0, 'p_ls': 2},
             'WSLS_decay_weight': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'w': 4},
@@ -283,6 +285,7 @@ class VisualSearchModels:
             'sampler_decay': self.sampler_decay_update,
             'sampler_decay_PE': self.sampler_decay_PE_update,
             'sampler_decay_AV': self.sampler_decay_AV_update,
+            'perseveration': self.perseveration_update,
             'WSLS': self.WSLS_update,
             'WSLS_delta': self.WSLS_delta_update,
             'WSLS_delta_weight': self.WSLS_delta_weight_update,
@@ -331,6 +334,7 @@ class VisualSearchModels:
             'sampler_decay': self.standard_nll,
             'sampler_decay_PE': self.standard_nll,
             'sampler_decay_AV': self.standard_nll,
+            'perseveration': self.WSLS_nll,
             'WSLS': self.WSLS_nll,
             'WSLS_delta': self.WSLS_nll,
             'WSLS_delta_weight': self.WSLS_nll,
@@ -455,8 +459,9 @@ class VisualSearchModels:
         self.EVs[chosen] += reward
 
     def decay_fre_update(self, chosen, reward, rt, trial):
-        multiplier = self.choices_count[chosen] ** (-self.b)
         self.EVs = self.EVs * (1 - self.a)
+        self.choices_count[chosen] += 1
+        multiplier = self.choices_count[chosen] ** (-self.b)
         self.EVs[chosen] += reward * multiplier
 
     def decay_choice_update(self, chosen, reward, rt, trial):
@@ -480,9 +485,12 @@ class VisualSearchModels:
         reward_per_RT = reward / np.clip(rt, 0.0001, None)  # Avoid division by zero
         self.mean = self.mean * (1 - self.a)
         self.var = self.var * (1 - self.a)
+        self.choices_count = self.choices_count * (1 - self.a)
+        self.choices_count[chosen] += 1
         self.var[chosen] += (reward_per_RT - self.mean[chosen]) ** 2
+        uncertainty = [(self.var[x] / np.clip(self.choices_count[x], 1, 9999)) for x in range(self.num_options)]
         self.mean[chosen] += reward_per_RT
-        self.EVs = self.mean - (self.lamda * self.var) / 2
+        self.EVs = self.mean - (0.5 * self.lamda * np.array(uncertainty))
 
     def decay_win_update(self, chosen, reward, rt, trial):
         prediction_error = reward - self.AV
@@ -504,6 +512,7 @@ class VisualSearchModels:
     def mean_var_update(self, chosen, reward, rt, trial):
         # no alpha, just average
         prediction_error = reward - self.mean[chosen]
+        self.choices_count[chosen] += 1
         self.mean[chosen] += prediction_error / np.clip(self.choices_count[chosen], 1, 9999)
         self.var[chosen] += (prediction_error ** 2 - self.var[chosen]) / np.clip(self.choices_count[chosen], 1, 9999)
         self.EVs[chosen] = self.mean[chosen] - (0.5 * self.lamda * self.var[chosen])
@@ -524,11 +533,12 @@ class VisualSearchModels:
     def mean_var_decay_unc_update(self, chosen, reward, rt, trial):
         self.mean = self.mean * (1 - self.a)
         self.var = self.var * (1 - self.a)
+        self.choices_count = self.choices_count * (1 - self.a)
+        self.choices_count[chosen] += 1
         self.var[chosen] += (reward - self.mean[chosen]) ** 2
         uncertainty = [(self.var[x] / np.clip(self.choices_count[x], 1, 9999)) for x in range(self.num_options)]
         self.mean[chosen] += reward
         self.EVs = self.mean - (0.5 * self.lamda * np.array(uncertainty))
-
 
     def kalman_filter_update(self, chosen, reward, rt, trial):
         prediction_error = reward - self.EVs[chosen]
@@ -614,6 +624,14 @@ class VisualSearchModels:
         # Update EVs based on the samples from memory
         for j in range(len(self.reward_history)):
             self.EVs[self.choice_history[j]] += self.AllProbs[j] * self.PE[j]
+
+    def perseveration_update(self, chosen, reward, rt, trial):
+        self.Probs[:] = [0.0] * self.num_options
+        self.Probs[chosen] = self.w
+        n = self.num_options - 1
+        for option in range(self.num_options):
+            if option != chosen:
+                self.Probs[option] = (1 - self.w) / n
 
     def WSLS_update(self, chosen, reward, rt, trial):
         prediction_error = reward - self.AV
@@ -758,8 +776,6 @@ class VisualSearchModels:
         - reward: Reward received for the current trial.
         - trial: Current trial number.
         """
-
-        self.choices_count[chosen] += 1
 
         self.updating_function(chosen, reward, rt, trial)
 
@@ -1018,7 +1034,7 @@ class VisualSearchModels:
         results = []
 
         # Starting a pool of workers with ProcessPoolExecutor
-        with ProcessPoolExecutor() as executor:
+        with ProcessPoolExecutor(max_workers=16) as executor:
             # Submitting jobs to the executor for each participant
             for participant_id, participant_data in data.items():
                 # fit_participant is the function to be executed in parallel
