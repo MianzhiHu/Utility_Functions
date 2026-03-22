@@ -625,6 +625,16 @@ class ComputationalModels:
         self.var[chosen] += self.a * (prediction_error ** 2 - self.var[chosen])
         self.EVs[chosen] = self.mean[chosen] - (self.lamda * self.var[chosen]) / 2
 
+    def kalman_filter_update(self, chosen, reward, trial, choiceset=None):
+        prediction_error = reward - self.EVs[chosen]
+
+        # Kalman Gain
+        kalman_gain = self.var[chosen] / (self.var[chosen] + self.var_initial)
+
+        # Update EV and variance
+        self.var[chosen] = (1 - kalman_gain) * self.var[chosen]
+        self.EVs[chosen] += kalman_gain * prediction_error
+
     def sampler_decay_update(self, chosen, reward, trial, choiceset=None):
         """
         This sampler model is similar to the ACT-R model, but it takes all past trials into account.
