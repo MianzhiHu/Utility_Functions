@@ -1,3 +1,5 @@
+import math
+
 import numpy as np
 import pandas as pd
 import random
@@ -5,6 +7,7 @@ from scipy.optimize import minimize
 from scipy.stats import chi2, multivariate_t
 from concurrent.futures import ProcessPoolExecutor
 from utils.DualProcess import generate_random_trial_sequence
+from utils.ComputationalModeling import vb_model_selection, compute_exceedance_prob, BIC_weights, bayes_factor
 import time
 import ast
 from scipy.special import psi
@@ -42,6 +45,11 @@ MODEL_BOUNDS = {
     'mean_var_decay': [(0.0001, 4.9999), (0.0001, 0.9999), (-10, 10)],
     'mean_var_unc': [(0.0001, 4.9999), (0.0001, 0.9999), (-10, 10)],
     'kalman_filter': [(0.0001, 4.9999), (0.0001, 0.9999)],
+
+    # stim-frequency model
+    'stim_delta': [(0.0001, 4.9999), (0.0001, 0.9999)],
+    'stim_decay': [(0.0001, 4.9999), (0.0001, 0.9999)],
+    'stim_WSLS': [(0.0001, 0.9999), (0.0001, 0.9999)],
 
     # ACT-R
     'ACTR': [(0.0001, 4.9999), (0.0001, 0.9999), (-1.9999, -0.0001)],
@@ -213,6 +221,9 @@ class VisualSearchModels:
             'WSLS_delta': {'a': 1, 'p_ws': 0, 'p_ls': 2},
             'WSLS_decay_weight': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'w': 4},
             'WSLS_delta_weight': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'w': 4},
+            'stim_delta': {'t': 0, 'a': 1},
+            'stim_decay': {'t': 0, 'a': 1},
+            'stim_WSLS': {'p_ws': 0, 'p_ls': 1},
             'RT_exp_basic': {'t': 0, 'k': 1, 'RT_initial': 2},
             'RT_delta': {'t': 0, 'a': 1, 'RT_initial': 2},
             'RT_decay': {'t': 0, 'a': 1, 'RT_initial': 2},
@@ -290,6 +301,9 @@ class VisualSearchModels:
             'WSLS_delta': self.WSLS_delta_update,
             'WSLS_delta_weight': self.WSLS_delta_weight_update,
             'WSLS_decay_weight': self.WSLS_decay_weight_update,
+            'stim_delta': self.stim_delta,
+            'stim_decay': self.stim_decay,
+            'stim_WSLS': self.stim_WSLS,
             'RT_exp_basic': self.RT_exp_basic,
             'RT_delta': self.RT_delta,
             'RT_decay': self.RT_decay,
@@ -339,6 +353,9 @@ class VisualSearchModels:
             'WSLS_delta': self.WSLS_nll,
             'WSLS_delta_weight': self.WSLS_nll,
             'WSLS_decay_weight': self.weight_nll,
+            'stim_delta': self.standard_nll,
+            'stim_decay': self.standard_nll,
+            'stim_WSLS': self.WSLS_nll,
             'RT_exp_basic': self.standard_nll,
             'RT_delta': self.standard_nll,
             'RT_decay': self.standard_nll,
@@ -639,7 +656,7 @@ class VisualSearchModels:
 
         pos = int(prediction_error > 0)
         chosen_prob = pos * self.p_ws + (1 - pos) * (1 - self.p_ls)
-        other_prob = pos * (1 - self.p_ws) + (1 - pos) * self.p_ls
+        other_prob = (pos * (1 - self.p_ws) + (1 - pos) * self.p_ls) / (self.num_options - 1)
         self.Probs[:] = [other_prob] * self.num_options
         self.Probs[chosen] = chosen_prob
 
@@ -649,7 +666,7 @@ class VisualSearchModels:
 
         pos = int(prediction_error > 0)
         chosen_prob = pos * self.p_ws + (1 - pos) * (1 - self.p_ls)
-        other_prob = pos * (1 - self.p_ws) + (1 - pos) * self.p_ls
+        other_prob = (pos * (1 - self.p_ws) + (1 - pos) * self.p_ls) / (self.num_options - 1)
         self.Probs[:] = [other_prob] * self.num_options
         self.Probs[chosen] = chosen_prob
 
@@ -660,7 +677,7 @@ class VisualSearchModels:
 
         pos = int(prediction_error > 0)
         chosen_prob = pos * self.p_ws + (1 - pos) * (1 - self.p_ls)
-        other_prob = pos * (1 - self.p_ws) + (1 - pos) * self.p_ls
+        other_prob = (pos * (1 - self.p_ws) + (1 - pos) * self.p_ls) / (self.num_options - 1)
         self.Probs[:] = [other_prob] * self.num_options
         self.Probs[chosen] = chosen_prob
 
@@ -675,13 +692,32 @@ class VisualSearchModels:
 
         pos = int(prediction_error > 0)
         chosen_prob = pos * self.p_ws + (1 - pos) * (1 - self.p_ls)
-        other_prob = pos * (1 - self.p_ws) + (1 - pos) * self.p_ls
+        other_prob = (pos * (1 - self.p_ws) + (1 - pos) * self.p_ls) / (self.num_options - 1)
         self.Probs[:] = [other_prob] * self.num_options
         self.Probs[chosen] = chosen_prob
 
         # Decay
         self.EVs = self.EVs * (1 - self.a)
         self.EVs[chosen] += reward
+
+    # ------------------------------------------------------------------------------------------------------------------
+    # Now we define stimulus-frequency-based models specifically for the visual search task
+    # ------------------------------------------------------------------------------------------------------------------
+    def stim_delta(self, chosen, reward, rt, trial):
+        # Here, reward is essentially whether they chose the smaller set
+        # Thus, if reward = 0, it means the larger set was chosen; if reward = 1, it means the smaller set was chosen
+        self.EVs[chosen] += self.a * reward
+
+    def stim_decay(self, chosen, reward, rt, trial):
+        self.EVs = self.EVs * (1 - self.a)
+        self.EVs[chosen] += reward
+
+    def stim_WSLS(self, chosen, reward, rt, trial):
+        pos = int(reward > 0)
+        chosen_prob = pos * self.p_ws + (1 - pos) * (1 - self.p_ls)
+        other_prob = (pos * (1 - self.p_ws) + (1 - pos) * self.p_ls) / (self.num_options - 1)
+        self.Probs[:] = [other_prob] * self.num_options
+        self.Probs[chosen] = chosen_prob
 
     # ------------------------------------------------------------------------------------------------------------------
     # Now we define RT-related models specifically for the visual search task
@@ -1352,13 +1388,63 @@ def create_model_summary_df(model_results, criteria='BIC', return_best=False):
         AIC=('AIC', 'mean'),
         BIC=('BIC', 'mean')).assign(Model=name) for name, df in model_results.items()), ignore_index=True)
 
+    # Calculate BIC weights
+    summary_stats['BIC_W'] = summary_stats.groupby('Group')[criteria].transform(BIC_weights)
+
+    # Bayes Factor & Variational Bayesian model selection
+    vb_results = []
+    bf_results = []
+
+    for group, df_group in all_bics.groupby('Group'):
+        vb_bics = (df_group.pivot_table(index='participant_id', columns='Model', values=criteria).sort_index(axis=1))
+
+        # Identify best model
+        mean_bic = vb_bics.mean(axis=0)
+        best_model = mean_bic.idxmin()
+        best_bic = mean_bic.min()
+        best_model_df = vb_bics[[best_model]].rename(columns={best_model: 'BIC'}).reset_index(drop=True)
+        for model in vb_bics.columns:
+            current_model_df = vb_bics[[model]].rename(columns={model: 'BIC'}).reset_index(drop=True)
+
+            bf = bayes_factor(current_model_df, best_model_df)
+
+            bf_results.append({
+                'Group': group,
+                'Model': model,
+                'Best_Model': best_model,
+                'BF': bf
+            })
+
+        # VBMS
+        log_evidences = vb_bics.to_numpy() / (-2)
+        alpha, g = vb_model_selection(log_evidences)
+        model_freq = alpha / np.sum(alpha)
+        ex_probs = compute_exceedance_prob(alpha, n_samples=100000)
+
+        df_res = pd.DataFrame({
+            'Group': group,
+            'Model': vb_bics.columns,
+            'alpha': alpha,
+            'model_freq': model_freq,
+            'exceedance_prob': ex_probs
+        })
+
+        vb_results.append(df_res)
+
+    vb_df = pd.concat(vb_results, ignore_index=True)
+    bf_df = pd.DataFrame(bf_results)
+    results_vb_bf = pd.merge(vb_df, bf_df, on=['Group', 'Model'], how='left')
+
+    # Merge summary statistics with VB results
+    result_vb_bf_sum = pd.merge(summary_stats, results_vb_bf, on=['Group', 'Model'])
+
     # Merge summary statistics with best counts
-    result = (summary_stats.merge(best_counts, on=['Model','Group'], how='left').fillna({'N_Best_Fit': 0}).sort_values(['Model','Group']).reset_index(drop=True))
+    result_all = (result_vb_bf_sum.merge(best_counts, on=['Model','Group'], how='left').fillna({'N_Best_Fit': 0}).sort_values(['Model','Group']).reset_index(drop=True))
 
     if return_best:
-        return result, best
+        return result_all, best
     else:
-        return result
+        return result_all
 
 
 def create_model_summary_table(model_results, output_path,
@@ -1368,7 +1454,7 @@ def create_model_summary_table(model_results, output_path,
 
     # Create summary table in DOCX format
     doc = Document()
-    table = doc.add_table(rows=1, cols=5)
+    table = doc.add_table(rows=1, cols=10)
     table.style = 'Table Grid'
     header_cells = table.rows[0].cells
     header_cells[0].text = 'Group'
@@ -1376,6 +1462,11 @@ def create_model_summary_table(model_results, output_path,
     header_cells[2].text = 'AIC'
     header_cells[3].text = 'BIC'
     header_cells[4].text = 'N Best Fit'
+    header_cells[5].text = 'BIC Weight'
+    header_cells[6].text = 'Bayes Factor'
+    header_cells[7].text = 'Alpha'
+    header_cells[8].text = 'Model Frequency'
+    header_cells[9].text = 'Exceedance Probability'
 
     # Find best models for each group based on BIC
     best_models = {}
@@ -1405,6 +1496,11 @@ def create_model_summary_table(model_results, output_path,
         row_cells[2].text = ''
         row_cells[3].text = ''
         row_cells[4].text = ''
+        row_cells[5].text = ''
+        row_cells[6].text = ''
+        row_cells[7].text = ''
+        row_cells[8].text = ''
+        row_cells[9].text = ''
 
         # Rows per model within this group
         for model in model_results.keys():
@@ -1419,9 +1515,14 @@ def create_model_summary_table(model_results, output_path,
             row_cells = table.add_row().cells
             row_cells[0].text = ''
             row_cells[1].text = model
-            row_cells[2].text = f"{group_data['AIC'].values[0]:.2f}"
-            row_cells[3].text = f"{group_data['BIC'].values[0]:.2f}"
+            row_cells[2].text = format_num(group_data['AIC'].values[0], decimals=2)
+            row_cells[3].text = format_num(group_data['BIC'].values[0], decimals=2)
             row_cells[4].text = f"{int(group_data['N_Best_Fit'].values[0])}"
+            row_cells[5].text = format_num(group_data['BIC_W'].values[0], decimals=2)
+            row_cells[6].text = format_num(group_data['BF'].values[0], decimals=2)
+            row_cells[7].text = format_num(group_data['alpha'].values[0], decimals=3)
+            row_cells[8].text = format_num(group_data['model_freq'].values[0], decimals=3)
+            row_cells[9].text = format_num(group_data['exceedance_prob'].values[0], decimals=3)
 
             # Highlight best model row for this group
             if group in best_models and model == best_models[group]['Model']:
@@ -1432,6 +1533,29 @@ def create_model_summary_table(model_results, output_path,
 
     # Save the document
     doc.save(output_path)
+
+
+def format_num(x, decimals=2):
+    """
+    Format numbers as:
+    - '< .001' if rounded value is smaller than .001
+    - scientific notation like '1.23×10^4' if > 1000
+    - otherwise fixed decimals
+    """
+    if pd.isna(x):
+        return ''
+
+    x = float(x)
+
+    if abs(x) < 0.001:
+        return '< .001'
+
+    if abs(x) > 1000:
+        exponent = int(math.floor(math.log10(abs(x))))
+        mantissa = x / (10 ** exponent)
+        return f"{mantissa:.2f}×10^{exponent}"
+
+    return f"{x:.{decimals}f}"
 # ======================================================================================================================
 # End of the VisualSearchModels class (Other assistant classes can be found in ComputationalModeling.py)
 # ======================================================================================================================

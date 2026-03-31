@@ -1499,6 +1499,14 @@ def bayes_factor(null_results, alternative_results):
 
     return BF
 
+
+def BIC_weights(bic_values):
+    """Calculate BIC weights from BIC values."""
+    min_bic = np.min(bic_values)
+    delta_bic = bic_values - min_bic
+    weights = np.exp(-0.5 * delta_bic)
+    return weights / np.sum(weights)
+
 # ----------------------------------------------------------------------------------------------------------------------
 # Implement Bayesian Model Selection (BMS)
 # ----------------------------------------------------------------------------------------------------------------------
