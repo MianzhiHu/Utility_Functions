@@ -1,8 +1,10 @@
+import os
 import numpy as np
 import pandas as pd
 import random
 from scipy.optimize import minimize
 from scipy.stats import chi2, multivariate_t
+from statsmodels.api import OLS, add_constant
 from concurrent.futures import ProcessPoolExecutor
 from utils.DualProcess import generate_random_trial_sequence
 import time
@@ -42,13 +44,20 @@ MODEL_BOUNDS = {
     'decay_PVL': [(0.0001, 5.0), (0.0001, 0.9999), (0.0001, 1.0), (0.0001, 5.0)],
     'decay_PVL_relative': [(0.0001, 5.0), (0.0001, 0.9999), (0.0001, 1.0), (0.0001, 5.0)],
     'decay_PVL_relative_RR': [(0.0001, 5.0), (0.0001, 0.9999), (0.0001, 1.0), (0.0001, 5.0)],
+    'decay_PVPE': [(0.0001, 5.0), (0.0001, 0.9999), (0.0001, 1.0), (0.0001, 5.0)],
     'delta_asymmetric': [(0.0001, 5.0), (0.0001, 0.9999), (0.0001, 1.0)],
     'mean_var_utility': [(0.0001, 5.0), (0.0001, 0.9999), (0.0001, 123.9999)],
     'delta_uncertainty': [(0.0001, 5.0), (0.01, 0.99), (0.5, 5.0), (0.0, 1000.0)],
     'WSLS': [(0.0001, 0.9999), (0.0001, 0.9999)],
+    'WSLS_avg': [(0.0001, 0.9999), (0.0001, 0.9999)],
     'WSLS_delta': [(0.0001, 0.9999), (0.0001, 0.9999), (0.0001, 0.9999)],
     'ACTR': [(0.0001, 5.0), (0.0001, 0.9999), (-1.9999, -0.0001)],
     'ACTR_Ori': [(0.0001, 5.0), (0.0001, 0.9999), (-1.9999, -0.0001)],
+    'kalman_filter': [(0.0001, 5.0), (0.0001, 8), (0.0001, 5.6), (0.0001, 1.0), (0.0001, 100.0)],
+    'kalman_filter_bonus': [(0.0001, 5.0), (0.0001, 8), (0.0001, 5.6), (0.0001, 1.0), (0.0001, 100.0), (0.0, 50.0)],
+    'kalman_decay': [(0.0001, 5.0), (0.0001, 8), (0.0001, 5.6), (0.0001, 1.0), (0.0001, 100.0)],
+    'kalman_decay_bonus': [(0.0001, 5.0), (0.0001, 8), (0.0001, 5.6), (0.0001, 1.0), (0.0001, 100.0), (0.0, 50.0)],
+    'kalman_simple': [(0.0001, 5.0), (0.0001, 8)]
 }
 
 
@@ -81,7 +90,6 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
 
     model.iteration = 0
     best_nll = 100000  # Initialize best negative log likelihood to a large number
-    best_initial_guess = None
     best_parameters = None
     best_EV = None
     best_exploration = None
@@ -114,7 +122,6 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
 
         if result.fun < best_nll:
             best_nll = result.fun
-            best_initial_guess = initial_guess
             best_parameters = result.x
             best_EV = model.final_EVs.copy()
             best_exploration = model.final_exploration.copy()
@@ -126,7 +133,6 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
     result_dict = {
         'participant_id': participant_id,
         'best_nll': best_nll,
-        'best_initial_guess': best_initial_guess,
         'best_parameters': best_parameters,
         'best_EV': best_EV,
         'exploitation': best_exploration,
@@ -161,6 +167,7 @@ class ComputationalModels:
         self.num_exp_restart = None
         self.num_params = num_params
         self.initial_EV = None
+        self.initial_var = None
         self.choices_count = np.ones(self.num_options)
         self.possible_options = [0, 1, 2, 3]
         self.memory_weights = []
@@ -197,25 +204,31 @@ class ComputationalModels:
             'sampler_decay_PE': {'t': 0, 'a': 1},
             'sampler_decay_AV': {'t': 0, 'a': 1},
             'WSLS': {'p_ws': 0, 'p_ls': 1},
+            'WSLS_avg': {'p_ws': 0, 'p_ls': 1},
             'WSLS_delta': {'a': 1, 'p_ws': 0, 'p_ls': 2},
             'WSLS_decay_weight': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'w': 4},
             'WSLS_delta_weight': {'t': 0, 'a': 1, 'p_ws': 2, 'p_ls': 3, 'w': 4},
             'ACTR_Ori': {'a': 1, 's': 0, 'tau': 2},
             'ACTR': {'t': 0, 'a': 1, 'tau': 2},
+            'kalman_filter': {'t': 0, 'dis_sd': 1, 'noise_sd': 2, 'lamda': 3, 'theta': 4},
+            'kalman_filter_bonus': {'t': 0, 'dis_sd': 1, 'noise_sd': 2, 'lamda': 3, 'theta': 4, 'exploration_bonus': 5},
+            'kalman_decay': {'t': 0, 'dis_sd': 1, 'noise_sd': 2, 'lamda': 3, 'theta': 4},
+            'kalman_decay_bonus': {'t': 0, 'dis_sd': 1, 'noise_sd': 2, 'lamda': 3, 'theta': 4, 'exploration_bonus': 5},
+            'kalman_simple': {'t': 0, 'dis_sd': 1}
         }
 
         # any attributes you always want to have, even if None
         self._DEFAULT_ATTRS = [
             'RT_initial_suboptimal', 'RT_initial_optimal', 'RT_initial',
-            'k', 's', 't', 'a', 'b', 'tau', 'lamda',
-            'p_ws', 'p_ls', 'w', 'param_EV'
+            'k', 's', 't', 'a', 'b', 'tau', 'lamda', 'exploration_bonus',
+            'p_ws', 'p_ls', 'w', 'param_EV', 'theta', 'dis_sd', 'noise_sd'
         ]
 
         self._EXTENDED_ATTRS = [
             'unc'
         ]
 
-        self._Exploitation_map = {True: 'exploitation', False: 'exploration'}
+        self.exploitation_map = {True: 'exploitation', False: 'exploration'}
 
         # initialize default b overrides
         if num_params == 2:
@@ -269,11 +282,17 @@ class ComputationalModels:
             'sampler_decay_PE': self.sampler_decay_PE_update,
             'sampler_decay_AV': self.sampler_decay_AV_update,
             'WSLS': self.WSLS_update,
+            'WSLS_avg': self.WSLS_avg_update,
             'WSLS_delta': self.WSLS_delta_update,
             'WSLS_delta_weight': self.WSLS_delta_weight_update,
             'WSLS_decay_weight': self.WSLS_decay_weight_update,
             'ACTR': self.ACTR_update,
-            'ACTR_Ori': self.ACTR_update
+            'ACTR_Ori': self.ACTR_update,
+            'kalman_filter': self.kalman_filter_update,
+            'kalman_filter_bonus': self.kalman_filter_update,
+            'kalman_decay': self.kalman_decay_update,
+            'kalman_decay_bonus': self.kalman_decay_update,
+            'kalman_simple': self.kalman_simple_update,
         }
 
         self.updating_function = self.updating_mapping[self.model_type]
@@ -300,10 +319,16 @@ class ComputationalModels:
             'sampler_decay_PE': self.standard_nll,
             'sampler_decay_AV': self.standard_nll,
             'WSLS': self.WSLS_nll,
+            'WSLS_avg': self.WSLS_nll,
             'WSLS_delta': self.WSLS_nll,
             'WSLS_delta_weight': self.WSLS_nll,
             'ACTR': self.ACTR_nll,
-            'ACTR_Ori': self.ACTR_nll
+            'ACTR_Ori': self.ACTR_nll,
+            'kalman_filter':self.standard_nll,
+            'kalman_filter_bonus':self.standard_nll,
+            'kalman_decay': self.standard_nll,
+            'kalman_decay_bonus': self.standard_nll,
+            'kalman_simple':self.standard_nll,
         }
 
         self.nll_mapping_IGT_SGT = {
@@ -327,11 +352,18 @@ class ComputationalModels:
             'sampler_decay_PE': self.igt_nll,
             'sampler_decay_AV': self.igt_nll,
             'WSLS': self.WSLS_nll,
+            'WSLS_avg': self.WSLS_nll,
             'WSLS_delta': self.WSLS_nll,
             'WSLS_delta_weight': self.WSLS_nll,
             'WSLS_decay_weight': self.WSLS_nll,
             'ACTR': self.ACTR_nll,
-            'ACTR_Ori': self.ACTR_nll
+            'ACTR_Ori': self.ACTR_nll,
+            'kalman_filter': self.igt_nll,
+            'kalman_filter_bonus': self.igt_nll,
+            'kalman_decay': self.igt_nll,
+            'kalman_decay_bonus': self.igt_nll,
+            'kalman_bonus': self.igt_nll,
+            'kalman_simple': self.igt_nll,
         }
 
         if task == 'ABCD':
@@ -385,11 +417,17 @@ class ComputationalModels:
             'sampler_decay_PE': self.softmax,
             'sampler_decay_AV': self.softmax,
             'WSLS': self.softmax,
+            'WSLS_avg': self.softmax,
             'WSLS_delta': self.softmax,
             'WSLS_delta_weight': self.softmax,
             'WSLS_decay_weight': self.softmax,
             'ACTR': self.softmax,
-            'ACTR_Ori': self.softmax_ACTR
+            'ACTR_Ori': self.softmax_ACTR,
+            'kalman_filter': self.softmax,
+            'kalman_filter_bonus': self.softmax_exploration,
+            'kalman_decay': self.softmax,
+            'kalman_decay_bonus': self.softmax_exploration,
+            'kalman_simple': self.softmax,
         }
 
     def reset(self):
@@ -409,15 +447,21 @@ class ComputationalModels:
         self.EVs = self.initial_EV.copy()
         self.EVs_raw = self.initial_EV.copy()
         self.UVs = np.full(self.num_options, self.unc ** 2)
-        self.Probs = np.full(self.num_options, 0.25)
+        self.Probs = np.full(self.num_options, 1 / self.num_options)
         self.mean = np.mean(self.initial_EV.copy())
         self.AV = np.mean(self.initial_EV.copy())
-        self.var = np.full(self.num_options, 1 / 12)
+        self.var = self.initial_var.copy()
 
     def softmax(self, x):
         c = 3 ** self.t - 1
         x_norm = x - np.min(x)
         e_x = np.exp(np.minimum(c * x_norm, 700))
+        return np.clip(e_x / e_x.sum(), a_min=1e-64, a_max=1.0-1e-64)
+
+    def softmax_exploration(self, x):
+        c = 3 ** self.t - 1
+        x_norm = x - np.min(x)
+        e_x = np.exp(np.minimum(c * (x_norm + self.exploration_bonus * np.sqrt(np.asarray(self.var))), 700))
         return np.clip(e_x / e_x.sum(), a_min=1e-64, a_max=1.0-1e-64)
 
     def softmax_ACTR(self, x):
@@ -629,7 +673,35 @@ class ComputationalModels:
         prediction_error = reward - self.EVs[chosen]
 
         # Kalman Gain
-        kalman_gain = self.var[chosen] / (self.var[chosen] + self.var_initial)
+        kalman_gain = self.var[chosen] / (self.var[chosen] + self.dis_sd ** 2)
+
+        # Update EV and variance
+        self.var[chosen] = (1 - kalman_gain) * self.var[chosen]
+        self.EVs[chosen] += kalman_gain * prediction_error
+
+        # Drifting
+        self.var[chosen] =  self.lamda ** 2 * self.var[chosen] + self.noise_sd ** 2
+        self.EVs[chosen] = self.lamda * self.EVs[chosen] + (1 - self.lamda) * self.theta
+
+    def kalman_decay_update(self, chosen, reward, trial, choiceset=None):
+        prediction_error = reward - self.EVs[chosen]
+
+        # Kalman Gain
+        kalman_gain = self.var[chosen] / (self.var[chosen] + self.dis_sd ** 2)
+
+        # Update EV and variance
+        self.var[chosen] = (1 - kalman_gain) * self.var[chosen]
+        self.EVs[chosen] += kalman_gain * prediction_error
+
+        # Drifting
+        self.var =  self.lamda ** 2 * np.asarray(self.var) + self.noise_sd ** 2
+        self.EVs = self.lamda * np.asarray(self.EVs) + (1 - self.lamda) * self.theta
+
+    def kalman_simple_update(self, chosen, reward, trial, choiceset=None):
+        prediction_error = reward - self.EVs[chosen]
+
+        # Kalman Gain
+        kalman_gain = self.var[chosen] / (self.var[chosen] + self.dis_sd ** 2)
 
         # Update EV and variance
         self.var[chosen] = (1 - kalman_gain) * self.var[chosen]
@@ -711,12 +783,19 @@ class ComputationalModels:
             self.EVs[self.choice_history[j]] += self.AllProbs[j] * self.PE[j]
 
     def WSLS_update(self, chosen, reward, trial, choiceset=None):
+        pos = int(reward > 0)
+        chosen_prob = pos * self.p_ws + (1 - pos) * (1 - self.p_ls)
+        other_prob = (pos * (1 - self.p_ws) + (1 - pos) * self.p_ls) / (self.num_options - 1)
+        self.Probs[:] = [other_prob] * self.num_options
+        self.Probs[chosen] = chosen_prob
+
+    def WSLS_avg_update(self, chosen, reward, trial, choiceset=None):
         prediction_error = reward - self.AV
-        self.AV += prediction_error / (trial + 1)
+        self.AV += prediction_error / trial
 
         pos = int(prediction_error > 0)
         chosen_prob = pos * self.p_ws + (1 - pos) * (1 - self.p_ls)
-        other_prob = pos * (1 - self.p_ws) + (1 - pos) * self.p_ls
+        other_prob = (pos * (1 - self.p_ws) + (1 - pos) * self.p_ls) / (self.num_options - 1)
         self.Probs[:] = [other_prob] * self.num_options
         self.Probs[chosen] = chosen_prob
 
@@ -726,18 +805,18 @@ class ComputationalModels:
 
         pos = int(prediction_error > 0)
         chosen_prob = pos * self.p_ws + (1 - pos) * (1 - self.p_ls)
-        other_prob = pos * (1 - self.p_ws) + (1 - pos) * self.p_ls
+        other_prob = (pos * (1 - self.p_ws) + (1 - pos) * self.p_ls) / (self.num_options - 1)
         self.Probs[:] = [other_prob] * self.num_options
         self.Probs[chosen] = chosen_prob
 
     def WSLS_delta_weight_update(self, chosen, reward, trial, choiceset=None):
         # WSLS
         prediction_error = reward - self.AV
-        self.AV += prediction_error / (trial + 1)
+        self.AV += prediction_error / (trial)
 
         pos = int(prediction_error > 0)
         chosen_prob = pos * self.p_ws + (1 - pos) * (1 - self.p_ls)
-        other_prob = pos * (1 - self.p_ws) + (1 - pos) * self.p_ls
+        other_prob = (pos * (1 - self.p_ws) + (1 - pos) * self.p_ls) / (self.num_options - 1)
         self.Probs[:] = [other_prob] * self.num_options
         self.Probs[chosen] = chosen_prob
 
@@ -748,11 +827,11 @@ class ComputationalModels:
     def WSLS_decay_weight_update(self, chosen, reward, trial, choiceset=None):
         # WSLS
         prediction_error = reward - self.AV
-        self.AV += prediction_error / (trial + 1)
+        self.AV += prediction_error / (trial)
 
         pos = int(prediction_error > 0)
         chosen_prob = pos * self.p_ws + (1 - pos) * (1 - self.p_ls)
-        other_prob = pos * (1 - self.p_ws) + (1 - pos) * self.p_ls
+        other_prob = (pos * (1 - self.p_ws) + (1 - pos) * self.p_ls) / (self.num_options - 1)
         self.Probs[:] = [other_prob] * self.num_options
         self.Probs[chosen] = chosen_prob
 
@@ -917,41 +996,10 @@ class ComputationalModels:
 
         nll = 0
 
-        for r, cs, ch, t in zip(reward, choiceset, choice, trial):
+        for r, ch, t in zip(reward, choice, trial):
             prob_choice = self.Probs[ch]
             nll += -np.log(max(self.epsilon, prob_choice))
-            # if the experiment is restarted, we reset the model
-            if t % self.num_exp_restart == 0:
-                self.final_EVs = self.EVs.copy()
-                self.reset()
-                continue
-
-            # if the current trial is the starting trial of the new experiment and if the initialization is set to 'first_trial',
-            # we initialize the model with the first trial
-            if t % self.num_exp_restart == 1 and self.skip_first:
-                self.model_initialization(reward, choice, trial, choiceset, t-2)
-                continue
-
-            # if the trial is not a training trial, we skip the update
-            if t % self.num_exp_restart > self.num_training_trials:
-                continue
-
-            # Otherwise, we update the model
-            self.update(ch, r, t, cs)
-
-        return nll
-
-    def standard_nll(self, reward, choice, trial, choiceset=None):
-
-        nll = 0
-
-        for r, cs, ch, t in zip(reward, choiceset, choice, trial):
-            cs_mapped = self.choiceset_mapping[0][cs]
-            prob_choice = self.softmax_mapping[self.model_type](np.array([self.EVs[cs_mapped[0]],
-                                                                          self.EVs[cs_mapped[1]]]))[0]
-            prob_choice_alt = self.softmax_mapping[self.model_type](np.array([self.EVs[cs_mapped[1]],
-                                                                              self.EVs[cs_mapped[0]]]))[0]
-            nll += -np.log(max(self.epsilon, prob_choice if ch == cs_mapped[0] else prob_choice_alt))
+            self.exploration.append(self.exploitation_map[ch == np.argmax(self.Probs)])
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
@@ -971,17 +1019,67 @@ class ComputationalModels:
                 continue
 
             # Otherwise, we update the model
-            self.update(ch, r, t, cs)
+            self.update(ch, r, t)
+
+        return nll
+
+    def standard_nll(self, reward, choice, trial, choiceset=None):
+
+        """
+        This function is to calculate the NLL for the ABCD task used in Don et al. (2019), Don & Worthy (2022),
+        Hu et al.(2025), and Hu & Worthy (2026). The main assumption of this function is that the choices are always
+        made between two options (choice set), which is the case for the ABCD task. For other tasks that do not have
+        this assumption, we will use the igt_nll function to calculate the NLL, which can handle choice sets with
+        more than two options.
+        """
+
+        nll = 0
+
+        for r, cs, ch, t in zip(reward, choiceset, choice, trial):
+            cs_mapped = self.choiceset_mapping[0][cs]
+            prob_choice = self.softmax_mapping[self.model_type](np.array([self.EVs[cs_mapped[0]],
+                                                                          self.EVs[cs_mapped[1]]]))[0]
+            prob_choice_alt = self.softmax_mapping[self.model_type](np.array([self.EVs[cs_mapped[1]],
+                                                                              self.EVs[cs_mapped[0]]]))[0]
+            nll += -np.log(max(self.epsilon, prob_choice if ch == cs_mapped[0] else prob_choice_alt))
+            self.exploration.append(self.exploitation_map[ch == np.argmax(self.EVs)])
+
+            # if the experiment is restarted, we reset the model
+            if t % self.num_exp_restart == 0:
+                self.final_EVs = self.EVs.copy()
+                self.final_exploration = self.exploration.copy()
+                self.reset()
+                continue
+
+            # if the current trial is the starting trial of the new experiment and if the initialization is set to 'first_trial',
+            # we initialize the model with the first trial
+            if t % self.num_exp_restart == 1 and self.skip_first:
+                self.model_initialization(reward, choice, trial, choiceset, t-2)
+                continue
+
+            # if the trial is not a training trial, we skip the update
+            if t % self.num_exp_restart > self.num_training_trials:
+                continue
+
+            # Otherwise, we update the model
+            self.update(ch, r, t)
 
         return nll
 
     def igt_nll(self, reward, choice, trial, choiceset=None):
 
+        """
+        This function is to calculate the NLL for all unrestricted multi-armed bandit tasks, such as IGT, SGT,
+        and Daw et al. (2006) task. The main difference between igt_nll and standard_nll is that igt_nll does not
+        assume that the choices are always between two options. Instead, it calculates the probability of the chosen
+        option among all available options in the choice set, which can have more than two options.
+        """
+
         nll = 0
 
         for r, ch, t in zip(reward, choice, trial):
             prob_choice = self.softmax_mapping[self.model_type](np.array(self.EVs))[ch]
-            self.exploration.append(self._Exploitation_map[ch == np.argmax(self.EVs)])
+            self.exploration.append(self.exploitation_map[ch == np.argmax(self.EVs)])
 
             nll += -np.log(max(self.epsilon, prob_choice))
 
@@ -1045,17 +1143,17 @@ class ComputationalModels:
     def fixed_skip_first_init(self, reward, choice, trial, choiceset=None, trial_index=0):
         # fixed initialization of the model does not need to do anything special
         # but we need to skip the first trial
-        # self.update(choice[trial_index], reward[trial_index], trial[trial_index], choiceset[trial_index] if choiceset is not None else None)
         pass
 
     def midpoint_skip_first_init(self, reward, choice, trial, choiceset=None, trial_index=0):
         # initialize all EVs to the midpoint between 0 and the reward of the first trial
         midpoint_EV = np.mean(reward)
-        self.initial_EVs = np.full(self.num_options, midpoint_EV)
-        self.EVs = self.initial_EVs.copy()
-        self.EVs_raw = self.initial_EVs.copy()
+        self.initial_EV = np.full(self.num_options, midpoint_EV)
+        self.EVs = self.initial_EV.copy()
+        self.EVs_raw = self.initial_EV.copy()
         self.UVs = np.full(self.num_options, self.unc ** 2) # reset uncertainty to initial value
         self.choices_count = np.ones(self.num_options)  # reset choice counts to 1
+        self.Probs = np.full(self.num_options, 1 / self.num_options)  # reset probabilities to be equal for all options
         self.AV = midpoint_EV
 
     def first_trial_init(self, reward, choice, trial, choiceset=None, trial_index=0):
@@ -1073,10 +1171,13 @@ class ComputationalModels:
 
         # Populate the EVs for the first trial
         EV_trial1 = self.EVs[choice[trial_index]]
+        var_trial1 = self.var[choice[trial_index]]
         self.EVs = np.full(self.num_options, EV_trial1)
         self.EVs_raw = np.full(self.num_options, self.EVs_raw[choice[trial_index]])
+        self.var = np.full(self.num_options, var_trial1)
         self.UVs = np.full(self.num_options, self.unc ** 2) # reset uncertainty to initial value
         self.choices_count = np.ones(self.num_options)  # reset choice counts to 1
+        self.Probs = np.full(self.num_options, 1 / self.num_options) # reset probabilities to be equal for all options
         self.AV = reward[trial_index]
 
     def first_trial_no_alpha_init(self, reward, choice, trial, choiceset=None, trial_index=0):
@@ -1102,10 +1203,13 @@ class ComputationalModels:
 
         # Populate the EVs for the first trial
         EV_trial1 = self.EVs[choice[trial_index]]
+        var_trial1 = self.var[choice[trial_index]]
         self.EVs = np.full(self.num_options, EV_trial1)
+        self.var = np.full(self.num_options, var_trial1)
         self.EVs_raw = np.full(self.num_options, self.EVs_raw[choice[trial_index]])
         self.UVs = np.full(self.num_options, self.unc ** 2) # reset uncertainty to initial value
         self.choices_count = np.ones(self.num_options)  # reset choice counts to 1
+        self.Probs = np.full(self.num_options, 1 / self.num_options) # reset probabilities to be equal for all options
         self.AV = reward[trial_index]
 
     def parameterized_init(self, reward, choice, trial, choiceset=None, trial_index=0):
@@ -1115,6 +1219,7 @@ class ComputationalModels:
         self.EVs_raw = self.initial_EV.copy()
         self.UVs = np.full(self.num_options, self.unc ** 2)  # reset uncertainty to initial value
         self.choices_count = np.ones(self.num_options)  # reset choice counts to 1
+        self.Probs = np.full(self.num_options, 1 / self.num_options)  # reset probabilities to be equal for all options
         self.AV = reward[trial_index]
 
     def parameterized_skip_first_init(self, reward, choice, trial, choiceset=None, trial_index=0):
@@ -1124,18 +1229,20 @@ class ComputationalModels:
         self.EVs_raw = self.initial_EV.copy()
         self.UVs = np.full(self.num_options, self.unc ** 2) # reset uncertainty to initial value
         self.choices_count = np.ones(self.num_options)  # reset choice counts to 1
+        self.Probs = np.full(self.num_options, 1 / self.num_options)  # reset probabilities to be equal for all options
         self.AV = reward[trial_index]
 
-        # skip the first trial
-        # self.update(choice[trial_index], reward[trial_index], trial[trial_index], choiceset[trial_index] if choiceset is not None else None)
+    def fit(self, data, num_training_trials=150, num_exp_restart=999, initial_EV=None, initial_var=None,
+            initial_mode='fixed', num_iterations=100, beta_lower=-1, beta_upper=1, max_workers=None):
 
-    def fit(self, data, num_training_trials=150, num_exp_restart=999, initial_EV=None, initial_mode='fixed',
-            num_iterations=100, beta_lower=-1, beta_upper=1):
+        # detect how many works we have
+        workers = max_workers or os.cpu_count()
 
         self.num_training_trials = num_training_trials
         self.num_exp_restart = num_exp_restart
         self.num_options = len(initial_EV) if initial_EV is not None else 4
         self.initial_EV = np.array(initial_EV) if initial_EV is not None else [0.0, 0.0, 0.0, 0.0]
+        self.initial_var = np.array(initial_var) if initial_var is not None else [1 / 12, 1 / 12, 1 / 12, 1 / 12]
 
         if initial_mode == 'fixed':
             self.model_initialization = self.fixed_init
@@ -1167,7 +1274,7 @@ class ComputationalModels:
         results = []
 
         # Starting a pool of workers with ProcessPoolExecutor
-        with ProcessPoolExecutor() as executor:
+        with ProcessPoolExecutor(max_workers=workers) as executor:
             # Submitting jobs to the executor for each participant
             for participant_id, participant_data in data.items():
                 # fit_participant is the function to be executed in parallel
@@ -1624,7 +1731,7 @@ def dict_generator(df, task='ABCD'):
         },
         'IGT_SGT': {
             'reward': ['outcome.1', 'outcome', 'Reward', 'SGTReward', 'OutcomeValue'],
-            'choice': ['choice', 'keyResponse', 'SGTBinChoice', 'Optimal_Choice'],
+            'choice': ['choice', 'keyResponse', 'SGTBinChoice', 'Optimal_Choice', 'KeyResponse'],
         },
         'VS': {
             'reward': ['OutcomeValue'],
@@ -1787,6 +1894,56 @@ def model_recovery(model_names, models, reward_means, reward_var, AB_freq=100, C
     all_best_fitting_model['participant_id'] = all_best_fitting_model.index + 1
 
     return all_sim, all_fit, all_best_fitting_model
+
+
+def residual_calculator(data, behav_cols, task1_name=1, task2_name=2, subj_col='Subnum', task_col='Task',
+                        method='residual'):
+    result_df = data.copy()
+
+    # Pivot to wide format for regression
+    task1_data = data[data[task_col] == task1_name].set_index(subj_col)[behav_cols]
+    task2_data = data[data[task_col] == task2_name].set_index(subj_col)[behav_cols]
+
+    # Add suffix to distinguish tasks
+    task1_data = task1_data.add_suffix('_task1')
+    task2_data = task2_data.add_suffix('_task2')
+
+    # Merge Task 1 and Task 2 data
+    combined = task1_data.join(task2_data, how='inner')
+
+    # For each behavioral variable, compute residuals or raw differences
+    results_dict = {}
+    for col in behav_cols:
+        task1_col = f'{col}_task1'
+        task2_col = f'{col}_task2'
+
+        # Get valid data
+        valid_idx = combined[[task1_col, task2_col]].notna().all(axis=1)
+        if valid_idx.sum() > 0:
+            if method == 'residual':
+                X = add_constant(combined.loc[valid_idx, task1_col])
+                y = combined.loc[valid_idx, task2_col]
+
+                # Fit OLS model
+                model = OLS(y, X).fit()
+
+                # Store residuals
+                results_dict[col] = pd.Series(model.resid, index=combined.loc[valid_idx].index)
+                print(f'Shape of residuals for {col}: {results_dict[col].shape}')
+            elif method == 'difference':
+                # Calculate raw difference (Task 2 - Task 1)
+                results_dict[col] = combined.loc[valid_idx, task2_col] - combined.loc[valid_idx, task1_col]
+                print(f'Shape of differences for {col}: {results_dict[col].shape}')
+
+    # Update Task 2 rows with residuals or differences
+    for col in behav_cols:
+        if col in results_dict:
+            result_col_name = f'{col}_residual' if method == 'residual' else f'{col}_difference'
+            for subj in results_dict[col].index:
+                mask = (result_df[subj_col] == subj) & (result_df[task_col] == task2_name)
+                result_df.loc[mask, result_col_name] = results_dict[col][subj]
+    return result_df
+
 
 # ======================================================================================================================
 # Moving window approach

@@ -46,7 +46,6 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
     model.iteration = 0
 
     best_nll = 100000
-    best_initial_guess = None
     best_parameters = None
     best_weight = None
     best_obj_weight = None
@@ -55,6 +54,8 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
     best_EV_Gau_history = None
     best_EV_Dir_history = None
     best_EV = None
+    best_gau_exploration = None
+    best_dir_exploration = None
 
     for _ in range(num_iterations):
 
@@ -78,7 +79,6 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
         if isinstance(result, OptimizeResult):
             if result.fun < best_nll:
                 best_nll = result.fun
-                best_initial_guess = initial_guess
                 best_parameters = result.x
                 best_process_chosen = model.process_chosen
                 best_weight = model.weight_history
@@ -88,9 +88,10 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
                 best_EV = model.EVs
                 best_EV_Gau_history = model.EV_Gau_history
                 best_EV_Dir_history = model.EV_Dir_history
+                best_gau_exploration = model.final_gau_exploration
+                best_dir_exploration = model.final_dir_exploration
         elif isinstance(result, (float, np.float64)):
             best_nll = result
-            best_initial_guess = initial_guess
             best_parameters = initial_guess  # Since no optimization, best_parameters are initial guess
             best_process_chosen = model.process_chosen
             best_weight = model.weight_history
@@ -101,7 +102,6 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
 
     result_dict = {
         'participant_id': participant_id,
-        'best_initial_guess': best_initial_guess,
         'best_parameters': best_parameters,
         'EV_Gau': best_EV_Gau,
         'EV_Dir': best_EV_Dir,
@@ -113,6 +113,8 @@ def fit_participant(model, participant_id, pdata, model_type, task='ABCD', num_i
                                                      'Dual_Process_Sensitivity') else None,
         'EV_Gau_history': best_EV_Gau_history,
         'EV_Dir_history': best_EV_Dir_history,
+        'gau_exploitation': best_gau_exploration,
+        'dir_exploitation': best_dir_exploration,
         'best_nll': best_nll,
         'AIC': aic,
         'BIC': bic
@@ -168,6 +170,12 @@ class DualProcessModel:
         self.process_chosen = []
         self.weight_history = []
         self.obj_weight_history = []
+        self.gau_exploration = []
+        self.dir_exploration = []
+        self.final_gau_exploration = []
+        self.final_dir_exploration = []
+        self.EV_Dir_history = []
+        self.EV_Gau_history = []
 
         self.model = None
         self.sim_type = None
@@ -201,9 +209,16 @@ class DualProcessModel:
         # any attributes you always want to have, even if None
         self._DEFAULT_ATTRS = ['t', 't2', 'a', 'tau_gau', 'tau_dir', 'tau', 'weight']
 
+        # set override where t = t2
+        self._t2_OVERRIDES = {
+            'Dual_Process': 't'
+        }
+
         # initialize all attributes to None
         for attr in self._DEFAULT_ATTRS:
             setattr(self, attr, None)
+
+        self.exploitation_map = {True: 'exploitation', False: 'exploration'}
 
         # Define the mapping between model parameters and input features
         self.choiceset_mapping = [
@@ -311,6 +326,8 @@ class DualProcessModel:
         self.obj_weight_history = []
         self.EV_Dir_history = []
         self.EV_Gau_history = []
+        self.gau_exploration = []
+        self.dir_exploration = []
 
     def restart_experiment(self):
         def reset(self):
@@ -1497,6 +1514,8 @@ class DualProcessModel:
 
             self.obj_weight_history.append(obj_weight)
             self.weight_history.append(weight_dir)
+            self.EV_Gau_history.append(self.EV_Gau.copy())
+            self.EV_Dir_history.append(self.EV_Dir.copy())
 
             dir_prob = self.action_selection_Dir(np.array(self.EV_Dir), self.t)[ch]
             gau_prob = self.action_selection_Gau(np.array(self.EV_Gau), self.t2)[ch]
@@ -1504,11 +1523,15 @@ class DualProcessModel:
             prob_choice = EV_calculation(dir_prob, gau_prob, weight_dir)
 
             nll += -np.log(max(self.epsilon, prob_choice))
+            self.gau_exploration.append(self.exploitation_map[ch == np.argmax(self.EV_Gau)])
+            self.dir_exploration.append(self.exploitation_map[ch == np.argmax(self.EV_Dir)])
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
                 self.final_Gau_EVs = self.EV_Gau.copy()
                 self.final_Dir_EVs = self.EV_Dir.copy()
+                self.final_gau_exploration = self.gau_exploration.copy()
+                self.final_dir_exploration = self.dir_exploration.copy()
                 self.restart_experiment()
                 continue
 
@@ -1589,6 +1612,8 @@ class DualProcessModel:
         cfg = self._PARAM_MAP.get(self.model, {})
         for attr, idx in cfg.items():
             setattr(self, attr, params[idx])
+
+        self.t2 = getattr(self, self._t2_OVERRIDES.get(self.model, 't2'))
 
         trial = np.arange(1, len(reward) + 1)
 

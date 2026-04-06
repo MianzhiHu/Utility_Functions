@@ -48,8 +48,8 @@ def process_participant_data(participant_path, sgt_pos=1, igt_pos=3, img_pos=2):
     return df
 
 
-def determine_condition(group):
-    image_names = group['image_name'].astype(str)
+def determine_condition(group, col_name='image_name'):
+    image_names = group[col_name].astype(str)
     if image_names.str.contains('Nature').any():
         return 'Nature'
     elif image_names.str.contains('Urban').any():
