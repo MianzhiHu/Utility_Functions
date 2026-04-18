@@ -1930,6 +1930,7 @@ def residual_calculator(data, behav_cols, task1_name=1, task2_name=2, subj_col='
                 # Store residuals
                 results_dict[col] = pd.Series(model.resid, index=combined.loc[valid_idx].index)
                 print(f'Shape of residuals for {col}: {results_dict[col].shape}')
+
             elif method == 'difference':
                 # Calculate raw difference (Task 2 - Task 1)
                 results_dict[col] = combined.loc[valid_idx, task2_col] - combined.loc[valid_idx, task1_col]
@@ -1977,6 +1978,7 @@ def _fit_one_subject(args):
         {pid: pdata},
         num_iterations=num_iterations,
         # initial_EV=init_ev,
+        max_workers=1,
         **fit_kwargs
     )
     # grab the single‐row result
@@ -2049,6 +2051,22 @@ def moving_window_model_fitting(data, model, task='ABCD', num_iterations=100, wi
                     prev_EVs[pid] = final_EV
 
     return pd.DataFrame(window_results)
+
+
+def behavioral_moving_window(group, behavior_col, window_size=30):
+    results = []
+    for i in range(len(group)):
+        if i + window_size <= len(group):
+            window = group.iloc[i:i + window_size]
+            mw = window[behavior_col].mean()
+            results.append({
+                'Trial': i + 1,
+                'WindowStart': i + 1,
+                'WindowEnd': i + window_size,
+                behavior_col: mw
+            })
+    return pd.DataFrame(results)
+
 
 # ======================================================================================================================
 # Testing Code
