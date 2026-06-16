@@ -9,6 +9,7 @@ from concurrent.futures import ProcessPoolExecutor
 from utils.DualProcess import generate_random_trial_sequence
 import time
 import ast
+import re
 from scipy.special import psi
 from scipy.stats import dirichlet
 import copy
@@ -93,6 +94,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
     best_parameters = None
     best_EV = None
     best_exploration = None
+    best_EV_history = None
 
     for _ in range(num_iterations):  # Randomly initiate the starting parameter for 1000 times
 
@@ -125,6 +127,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             best_parameters = result.x
             best_EV = model.final_EVs.copy()
             best_exploration = model.final_exploration.copy()
+            best_EV_history = model.EV_history_final.copy()
 
     k = len(best_parameters)  # Number of parameters
     aic = 2 * k + 2 * best_nll
@@ -136,6 +139,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
         'best_parameters': best_parameters,
         'best_EV': best_EV,
         'exploitation': best_exploration,
+        'EV_history': best_EV_history,
         'AIC': aic,
         'BIC': bic
     }
@@ -175,6 +179,8 @@ class ComputationalModels:
         self.reward_history = []
         self.exploration = []
         self.final_exploration = []
+        self.EV_history = []
+        self.EV_history_final = []
         self.chosen_history = {option: [] for option in self.possible_options}
         self.reward_history_by_option = {option: [] for option in self.possible_options}
         self.AllProbs = []
@@ -443,6 +449,7 @@ class ComputationalModels:
         self.AllProbs = []
         self.PE = []
         self.exploration = []
+        self.EV_history = []
 
         self.EVs = self.initial_EV.copy()
         self.EVs_raw = self.initial_EV.copy()
@@ -458,10 +465,13 @@ class ComputationalModels:
         e_x = np.exp(np.minimum(c * x_norm, 700))
         return np.clip(e_x / e_x.sum(), a_min=1e-64, a_max=1.0-1e-64)
 
-    def softmax_exploration(self, x):
+    def softmax_exploration(self, x, var=None):
         c = 3 ** self.t - 1
-        x_norm = x - np.min(x)
-        e_x = np.exp(np.minimum(c * (x_norm + self.exploration_bonus * np.sqrt(np.asarray(self.var))), 700))
+        x = np.asarray(x, dtype=float)
+        var = np.asarray(self.var if var is None else var, dtype=float)
+        x_bonus = x + self.exploration_bonus * np.sqrt(var)
+        x_norm = x_bonus - np.max(x_bonus)
+        e_x = np.exp(np.minimum(c * x_norm, 700))
         return np.clip(e_x / e_x.sum(), a_min=1e-64, a_max=1.0-1e-64)
 
     def softmax_ACTR(self, x):
@@ -475,6 +485,19 @@ class ComputationalModels:
 
         e_x = np.exp(np.clip(x / t, -700, 700))
         return np.clip(e_x / e_x.sum(), 1e-32, 1 - 1e-32)
+
+    def selected_EV_zscore(self, chosen):
+        EVs = np.asarray(self.EVs, dtype=float)
+        EV_sd = EVs.std()
+        if EV_sd == 0:
+            return 0.0
+        return float(((EVs - EVs.mean()) / EV_sd)[chosen])
+
+    def selected_EV_rank(self, chosen):
+        EVs = np.asarray(self.EVs, dtype=float)
+        rank = int(1 + np.sum(EVs > EVs[chosen]))
+        rank_labels = {1: '1st', 2: '2nd', 3: '3rd', 4: '4th'}
+        return rank_labels.get(rank, f'{rank}th')
 
     def calculate_activation(self, appearances, current_trial):
         """
@@ -999,12 +1022,14 @@ class ComputationalModels:
         for r, ch, t in zip(reward, choice, trial):
             prob_choice = self.Probs[ch]
             nll += -np.log(max(self.epsilon, prob_choice))
-            self.exploration.append(self.exploitation_map[ch == np.argmax(self.Probs)])
+            self.exploration.append(self.selected_EV_rank(ch))
+            self.EV_history.append(self.selected_EV_zscore(ch))
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
                 self.final_EVs = self.EVs.copy()
                 self.final_exploration = self.exploration.copy()
+                self.EV_history_final = self.EV_history.copy()
                 self.reset()
                 continue
 
@@ -1037,17 +1062,23 @@ class ComputationalModels:
 
         for r, cs, ch, t in zip(reward, choiceset, choice, trial):
             cs_mapped = self.choiceset_mapping[0][cs]
-            prob_choice = self.softmax_mapping[self.model_type](np.array([self.EVs[cs_mapped[0]],
-                                                                          self.EVs[cs_mapped[1]]]))[0]
-            prob_choice_alt = self.softmax_mapping[self.model_type](np.array([self.EVs[cs_mapped[1]],
-                                                                              self.EVs[cs_mapped[0]]]))[0]
+            choice_EVs = np.array([self.EVs[cs_mapped[0]], self.EVs[cs_mapped[1]]])
+            if self.model_type in ('kalman_filter_bonus', 'kalman_decay_bonus'):
+                choice_vars = np.array([self.var[cs_mapped[0]], self.var[cs_mapped[1]]])
+                choice_probs = self.softmax_exploration(choice_EVs, choice_vars)
+            else:
+                choice_probs = self.softmax_mapping[self.model_type](choice_EVs)
+            prob_choice = choice_probs[0]
+            prob_choice_alt = choice_probs[1]
             nll += -np.log(max(self.epsilon, prob_choice if ch == cs_mapped[0] else prob_choice_alt))
-            self.exploration.append(self.exploitation_map[ch == np.argmax(self.EVs)])
+            self.exploration.append(self.selected_EV_rank(ch))
+            self.EV_history.append(self.selected_EV_zscore(ch))
 
             # if the experiment is restarted, we reset the model
             if t % self.num_exp_restart == 0:
                 self.final_EVs = self.EVs.copy()
                 self.final_exploration = self.exploration.copy()
+                self.EV_history_final = self.EV_history.copy()
                 self.reset()
                 continue
 
@@ -1079,7 +1110,8 @@ class ComputationalModels:
 
         for r, ch, t in zip(reward, choice, trial):
             prob_choice = self.softmax_mapping[self.model_type](np.array(self.EVs))[ch]
-            self.exploration.append(self.exploitation_map[ch == np.argmax(self.EVs)])
+            self.exploration.append(self.selected_EV_rank(ch))
+            self.EV_history.append(self.selected_EV_zscore(ch))
 
             nll += -np.log(max(self.epsilon, prob_choice))
 
@@ -1087,6 +1119,7 @@ class ComputationalModels:
             if t % self.num_exp_restart == 0:
                 self.final_EVs = self.EVs.copy()
                 self.final_exploration = self.exploration.copy()
+                self.EV_history_final = self.EV_history.copy()
                 self.reset()
                 continue
 
@@ -1835,7 +1868,14 @@ def trialwise_extractor(results, values=None):
     # Return the modified DataFrame
     return trialwise_params
 
+def parse_numeric_history(value):
+    if isinstance(value, list):
+        return [float(x) for x in value]
+    if pd.isna(value):
+        return []
 
+    value = re.sub(r'np\.(?:float|int)\d*\(([^()]*)\)', r'\1', str(value))
+    return [float(x) for x in ast.literal_eval(value)]
 
 # ======================================================================================================================
 # Model Recovery & Parameter Recovery Functions
