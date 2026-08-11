@@ -70,7 +70,7 @@ def _style_bar_axis(ax, ylabel, title='', x_rotation=45, tick_size=18, label_siz
 
 
 def plot_predictor_results(df, title='', ylabel='Semantic Loadings', figsize=(12, 6), only_sig=True,
-                             abs_ordering=True, save_path=None):
+                             abs_ordering=True, save_path=None, reverse_sign=False):
     """
     Plot significant results from PLS analysis.
 
@@ -86,6 +86,8 @@ def plot_predictor_results(df, title='', ylabel='Semantic Loadings', figsize=(12
         If True, only plot significant results. If False, plot all results with significant ones colored differently.
     save_path : str, optional
         Path to save the figure. If None, displays the plot instead.
+    reverse_sign : bool
+        If True, reverse the displayed LV weights after automatic alignment.
 
     Returns:
     --------
@@ -93,19 +95,24 @@ def plot_predictor_results(df, title='', ylabel='Semantic Loadings', figsize=(12
         The created figure
     """
     if only_sig:
-        # Filter significant results
         sig_results = df[df['significant'] == True].copy()
-        if abs_ordering:
-            sig_results = sig_results.sort_values('u1', key=abs, ascending=False)
-        else:
-            sig_results = sig_results.sort_values('u1', ascending=False)
     else:
-        sig_results = df
-        sig_results = sig_results.sort_values('u1', ascending=False)
+        sig_results = df.copy()
 
     if sig_results.empty:
         print(f"No significant results found for {title}")
         return None
+
+    # Orient first, then sort the displayed values. This ensures that a sign
+    # reversal also reverses ordinary descending order instead of leaving the
+    # newly negated weights in ascending order.
+    if reverse_sign:
+        sig_results['u1'] = -sig_results['u1']
+
+    if only_sig and abs_ordering:
+        sig_results = sig_results.sort_values('u1', key=abs, ascending=False)
+    else:
+        sig_results = sig_results.sort_values('u1', ascending=False)
 
     sns.set_style("white")
 
@@ -148,8 +155,16 @@ def plot_predictor_results(df, title='', ylabel='Semantic Loadings', figsize=(12
         plt.show()
 
 
-def plot_outcome_results(result_dir, boot_ratio_path, method, conditions, LV_Vis=1, plot_option=2, BehavLabels=None,
-                         ylabel="Correlation with Semantic Features", title=True, save_path=None):
+def plot_outcome_results(result_dir, boot_ratio_path, method, conditions, LV_Vis=1, BehavLabels=None,
+                         ylabel="Correlation with Semantic Features", title=True, save_path=None,
+                         reverse_sign=False):
+    """Plot outcomes after automatically orienting the selected PLS LV.
+
+    The sign is chosen using the same convention as ``get_pls_results``:
+    the predictor with the largest absolute LV weight is made positive.
+    Set ``reverse_sign=True`` to reverse that orientation consistently.
+    """
+
     # MATLAB is 1-based; Python is 0-based
     lv_idx = LV_Vis - 1
 
@@ -160,6 +175,26 @@ def plot_outcome_results(result_dir, boot_ratio_path, method, conditions, LV_Vis
     perm_result = result['perm_result'][0, 0]
     s = result['s']
 
+    # MATLAB stores the predictor weights in result.u. Use them to impose a
+    # deterministic sign convention without requiring a plot_option switch.
+    u = np.asarray(result['u'])
+    if u.dtype == object and u.size == 1:
+        u = np.asarray(u.item())
+    if u.ndim == 1:
+        if lv_idx != 0:
+            raise IndexError(f'LV {LV_Vis} is unavailable; result.u contains one LV.')
+        u_lv = u
+    else:
+        if lv_idx >= u.shape[1]:
+            raise IndexError(f'LV {LV_Vis} is unavailable; result.u has {u.shape[1]} LVs.')
+        u_lv = u[:, lv_idx]
+    if not np.isfinite(u_lv).any():
+        raise ValueError(f'Cannot orient LV {LV_Vis}: predictor weights are all non-finite.')
+    anchor_idx = int(np.nanargmax(np.abs(u_lv)))
+    orientation = 1 if u_lv[anchor_idx] >= 0 else -1
+    if reverse_sign:
+        orientation *= -1
+
     # Get the design and confidence intervals based on method
     if method == 1:  # task PLS
         design = np.asarray(boot_result['orig_usc'])[:, lv_idx]
@@ -169,6 +204,12 @@ def plot_outcome_results(result_dir, boot_ratio_path, method, conditions, LV_Vis
         design = np.asarray(boot_result['orig_corr'])[:, lv_idx]
         ll = np.asarray(boot_result['llcorr'])[:, lv_idx]
         ul = np.asarray(boot_result['ulcorr'])[:, lv_idx]
+
+    # Reflect outcomes with the same multiplier as the predictor weights.
+    # Swap CI endpoints so ll and ul retain their lower/upper meanings.
+    if orientation == -1:
+        design = -design
+        ll, ul = -ul, -ll
 
     # Define conditions
     num_conditions = len(conditions)
@@ -199,23 +240,12 @@ def plot_outcome_results(result_dir, boot_ratio_path, method, conditions, LV_Vis
         ll_cond = ll[idx_start:idx_end]
         ul_cond = ul[idx_start:idx_end]
 
-        # Flip sign if plot_option == 1
-        if plot_option == 1:
-            y = -design_cond
-            # Match MATLAB logic:
-            # errorbar(x, -design_cond, -ul_cond + design_cond, -design_cond + ll_cond)
-            yerr_lower = -ul_cond + design_cond
-            yerr_upper = -design_cond + ll_cond
-        else:
-            y = design_cond
-            # Match MATLAB logic:
-            # errorbar(x, design_cond, ll_cond - design_cond, design_cond - ul_cond)
-            yerr_lower = ll_cond - design_cond
-            yerr_upper = design_cond - ul_cond
+        y = design_cond
+        yerr_lower = design_cond - ll_cond
+        yerr_upper = ul_cond - design_cond
 
-        # Error bars must be nonnegative lengths
-        yerr_lower = np.abs(yerr_lower)
-        yerr_upper = np.abs(yerr_upper)
+        if np.any(yerr_lower < 0) or np.any(yerr_upper < 0):
+            raise ValueError('Bootstrap confidence-interval bounds are not ordered around their estimates.')
 
         x = np.arange(len(y))
 
@@ -255,6 +285,18 @@ def plot_outcome_results(result_dir, boot_ratio_path, method, conditions, LV_Vis
             ax.set_xticklabels(labels)
         else:
             ax.set_xticks(x)
+
+        if method == 3 and BehavLabels is not None:
+            printed_labels = labels
+        else:
+            printed_labels = [str(index + 1) for index in range(len(y))]
+        print(f'\nPLS LV {LV_Vis}, {conditions[cond_idx]}: plotted correlations and confidence intervals')
+        print(pd.DataFrame({
+            'Variable': printed_labels,
+            'correlation': y,
+            'lower_ci': ll_cond,
+            'upper_ci': ul_cond,
+        }).to_string(index=False))
 
         if title:
             plot_title = (
