@@ -7,8 +7,8 @@ import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
 from scipy.special import logsumexp, roots_legendre, log_ndtr
-from scipy.stats import exponnorm, invgauss
-from scipy.integrate import quad
+from scipy.stats import exponnorm, invgauss, norm
+from scipy.linalg import expm
 
 
 # Parameter bounds for each model type. Each tuple is (lower_bound, upper_bound).
@@ -27,6 +27,9 @@ model_bounds = {
                 (0.000001, 0.999999), (0.000001, 0.999999)],
     'motor_rdex': [(0.05, 10.0), (0.05, 10.0), (0.1, 5.0), (0.0, 1.0), (0.0, 1.5), (0.01, 0.5), (0.01, 1.5),
                    (0.000001, 0.999999), (0.000001, 0.999999), (0.5, 2.0)],
+    'twobytwo_ddm': [(0.1, 4.0)] + [(-1.0, 1.0)] * 5 + [(0.3, 3.0), (0.0, 1.0)],
+    'twobytwo_lba': [(0.1, 4.0)] + [(-1.0, 1.0)] * 5 + [(0.1, 3.0), (0.1, 1.0), (0.2, 2.0), (0.0, 1.0)],
+    'twobytwo_ccr': [(0.000001, 0.1), (0.0, 1.0), (0.01, 1.0), (0.01, 1.0), (0.00001, 0.02), (0.00001, 0.02), (0.0, 1.0)],
 }
 
 
@@ -249,7 +252,7 @@ class ColumbiaCardTask:
             'cct_pt_prob': self.pt_prob_function,
             'cct_pt_loss_shape': self.pt_loss_shape_function,
         }
-        
+
     def softmax(self, x):
         # Apply the original custom softmax separately to each trial's options.
         x = np.asarray(x, dtype=float)
@@ -926,6 +929,236 @@ class StopSignal:
         return pd.DataFrame(results)
 
 
+class TwoByTwo:
+    """Deadline-limited correctness models; observed RT is never an input.
+
+    choice=1 means correct before the deadline; 0 includes errors AND omissions.
+    CTI and block_duration are seconds; the deadline starts at probe onset.
+    Use the recorded switch_type as a trial predictor when selecting CV folds.
+    response_congruent: colour and magnitude prescribe the same physical key.
+
+    DDM: midpoint starting point and diffusion noise SD=1.
+    LBA: Brown & Heathcote (2008), doi:10.1016/j.cogpsych.2007.12.002.
+    CCR: adapted from Schneider & Logan (2005), doi:10.1037/0096-3445.134.3.343.
+    Their multiplicative retrieval and exponential-step random walk are adapted
+    to task-name cues, colour/magnitude categories, and finite deadlines.
+    Bounds are initial search ranges, not published parameter estimates.
+    """
+    def __init__(self, model_type, criterion=4):
+        if model_type not in ['twobytwo_ddm', 'twobytwo_lba', 'twobytwo_ccr']:
+            raise ValueError('Use twobytwo_ddm, twobytwo_lba, or twobytwo_ccr')
+        if not isinstance(criterion, Integral) or criterion < 1:
+            raise ValueError('CCR criterion must be a positive integer')
+        self.model_type = model_type
+        self.criterion = criterion
+        # Fixed integration points, calculated once for the LBA model.
+        self.nodes, self.weights = roots_legendre(512)
+        self.input_columns = ['CTI', 'switch_type', 'task_type', 'response_congruent',
+                              'block_duration', 'choice']
+        self._param_map = {
+            'twobytwo_ddm': {'drift': 0, 'color_effect': 1, 'cue_switch_effect': 2,
+                            'task_switch_effect': 3, 'cti_effect': 4, 'incongruent_effect': 5,
+                            'boundary': 6, 'nondecision': 7},
+            'twobytwo_lba': {'drift': 0, 'color_effect': 1, 'cue_switch_effect': 2,
+                            'task_switch_effect': 3, 'cti_effect': 4, 'incongruent_effect': 5,
+                            'error_drift': 6, 'start_range': 7, 'threshold_gap': 8, 'nondecision': 9},
+            'twobytwo_ccr': {'unassociated': 0, 'associated_increment': 1, 'present_increment': 2,
+                            'decay': 3, 'cue_rate_color': 4, 'cue_rate_magnitude': 5, 'nondecision': 6},
+        }
+        self._function_map = {'twobytwo_ddm': self.ddm_function,
+                              'twobytwo_lba': self.lba_function,
+                              'twobytwo_ccr': self.compound_cue_function}
+
+    def ddm_function(self, drift, deadline):
+        # Note that this implementation is equivalent to the pyddm implementation (verified) with faster speed
+        decision_time = deadline - self.nondecision
+        if decision_time <= 0:
+            return 0.0
+        a = self.boundary
+
+        # Analytic integral of the two-boundary first-passage density from 0 to D-t0:
+        k = np.arange(1, 201)
+        decay = (drift**2 + (k * np.pi / a)**2) / 2
+
+        # The final probability is the eventual probability minus the tail probability beyond the deadline.
+        eventual_correct = 1 / (1 + np.exp(-a * drift))
+        correct_tail = (np.pi / a**2 * np.exp(drift * a / 2) * np.sum(k * np.sin(k * np.pi / 2) * np.exp(-decay * decision_time) / decay))
+        p_correct = float(eventual_correct - correct_tail)
+        return p_correct
+
+    def lba_function(self, drift, deadline):
+        # Note that this implementation is equivalent to the rtdists::lba_normcdf implementation (verified) with faster speed.
+        # Independent accumulators start uniformly in [0,A]; threshold b=A+gap.
+        # Across-trial drift SD is fixed at 1 for both correct and error runners.
+        decision_time = deadline - self.nondecision
+        if decision_time <= 0:
+            return 0.0
+        A = self.start_range
+        b = A + self.threshold_gap
+
+        # Integrate from zero to the available decision time at 512 fixed points.
+        t = decision_time * (self.nodes + 1) / 2
+        correct_low = (b - A) / t - drift
+        correct_high = b / t - drift
+        correct_pdf = (drift * (norm.cdf(correct_high) - norm.cdf(correct_low))
+                       + norm.pdf(correct_low) - norm.pdf(correct_high)) / A
+        error_low = (b - A) / t - self.error_drift
+        error_high = b / t - self.error_drift
+        error_cdf = (1 + (b - A - t * self.error_drift) / A * norm.cdf(error_low)
+                     - (b - t * self.error_drift) / A * norm.cdf(error_high)
+                     + t / A * (norm.pdf(error_low) - norm.pdf(error_high)))
+        # Each runner's drift is independently truncated above zero.
+        correct_pdf = correct_pdf / norm.cdf(drift)
+        error_cdf = error_cdf / norm.cdf(self.error_drift)
+        correct_by_deadline = decision_time / 2 * np.sum(
+            self.weights * correct_pdf * (1 - error_cdf))
+        return float(correct_by_deadline)
+
+    def compound_cue_function(self, cti, transition, task_type, congruent, deadline):
+        # Original evidence strengths eta_U <= eta_A <= eta_P are all free.
+        # Nonnegative increments enforce their ordering with the existing bounded fitter.
+        unassociated = self.unassociated
+        associated = unassociated + self.associated_increment
+        present = associated + self.present_increment
+
+        # Cue evidence x Target evidence
+        relevant_correct = associated * present
+        relevant_error = associated * unassociated
+        irrelevant_true = unassociated * present
+        irrelevant_false = unassociated * unassociated
+        if congruent:
+            correct_rate = relevant_correct + irrelevant_true
+            error_rate = relevant_error + irrelevant_false
+        else:
+            correct_rate = relevant_correct + irrelevant_false
+            error_rate = relevant_error + irrelevant_true
+
+        # Equations 4-5: encoding rate = v_LTM + d * residual cue evidence.
+        if transition == 'cue_stay':
+            residual_activation = present
+        elif transition == 'cue_switch':
+            residual_activation = associated
+        else:
+            residual_activation = unassociated
+        # Separate baseline cue-encoding rates for color and magnitude judgments.
+        if task_type == 'color':
+            cue_rate = self.cue_rate_color
+        else:
+            cue_rate = self.cue_rate_magnitude
+        encoding_rate = cue_rate + self.decay * residual_activation
+
+        # The paper uses milliseconds; our CTI, deadlines and residual time use seconds.
+        # Equation 11 sets step time from the summed evidence rates, with no extra speed parameter.
+        correct_rate *= 1000
+        error_rate *= 1000
+        encoding_rate *= 1000
+
+        # Each retrieval changes correct-minus-error evidence by +1 or -1.
+        # Exponentially timed steps form a continuous-time Markov chain.
+        # Absorption at +K before the deadline integrates all correct response times.
+        K = self.criterion  # Fixed integer, not a continuous optimization parameter.
+        n_states = 2 * K + 2
+        unencoded = 2 * K + 1
+        generator = np.zeros((n_states, n_states))
+        for state in range(1, 2 * K):
+            generator[state, state + 1] = correct_rate
+            generator[state, state - 1] = error_rate
+            generator[state, state] = -(correct_rate + error_rate)
+        generator[unencoded, K] = encoding_rate
+        generator[unencoded, unencoded] = -encoding_rate
+        # Error (0) and correct (2*K) are absorbing states: their rows stay zero.
+        initial = np.zeros(n_states)
+        initial[K] = 1 - np.exp(-encoding_rate * cti)
+        initial[unencoded] = np.exp(-encoding_rate * cti)
+        decision_time = deadline - self.nondecision
+        if decision_time <= 0:
+            return 0.0
+        # RT = fixed residual time + unfinished cue encoding + random-walk time.
+        final = initial @ expm(generator * decision_time)
+        return float(final[2 * K])
+
+    def probability_correct(self, params, CTI, switch_type, task_type, response_congruent,
+                            block_duration):
+        for attr, idx in self._param_map[self.model_type].items():
+            setattr(self, attr, params[idx])
+        trials = pd.DataFrame({'CTI': CTI, 'switch_type': switch_type, 'task_type': task_type,
+                               'response_congruent': response_congruent,
+                               'block_duration': block_duration})
+
+        # Sanity checks for trial predictors and values.
+        if trials.isna().any().any():
+            raise ValueError('TwoByTwo predictors must not contain missing values')
+        if not trials.switch_type.isin(['cue_stay', 'cue_switch', 'task_switch']).all():
+            raise ValueError('Unknown two-by-two transition')
+        if not trials.task_type.isin(['color', 'magnitude']).all():
+            raise ValueError('Unknown two-by-two task type')
+        if (not trials.response_congruent.isin([0, 1]).all()
+                or not trials.CTI.ge(0).all() or not trials.block_duration.gt(0).all()):
+            raise ValueError('Invalid two-by-two condition or timing values')
+
+        # Calculate each unique condition once, then restore original trial order.
+        group_ids = trials.groupby(list(trials.columns), sort=False).ngroup().to_numpy()
+        groups = trials.drop_duplicates()
+        probabilities = []
+        for row in groups.itertuples(index=False):
+            if self.model_type == 'twobytwo_ccr':
+                p_correct = self.compound_cue_function(row.CTI, row.switch_type, row.task_type,
+                                                       row.response_congruent,
+                                                       row.block_duration)
+            else:
+                # Same signed condition effects for DDM and LBA.
+                # Short CTI (0.1 s) is the baseline; cti_effect is long minus short.
+                drift = (self.drift + self.color_effect * (row.task_type == 'color')
+                         + self.cue_switch_effect * (row.switch_type == 'cue_switch')
+                         + self.task_switch_effect * (row.switch_type == 'task_switch')
+                         + self.cti_effect * np.isclose(row.CTI, 0.9)
+                         + self.incongruent_effect * (1 - row.response_congruent))
+                p_correct = self._function_map[self.model_type](drift, row.block_duration)
+            probabilities.append(p_correct)
+        return np.clip(np.asarray(probabilities)[group_ids], 0.0, 1.0)
+
+    def negative_log_likelihood(self, params, CTI, switch_type, task_type, response_congruent,
+                                block_duration, choice):
+        p_correct = self.probability_correct(params, CTI, switch_type, task_type, response_congruent, block_duration)
+        choice = np.asarray(choice, dtype=int)
+        observed_probability = np.where(choice == 1, p_correct, 1 - p_correct)
+        # Floor the observed outcome, including errors when p_correct is exactly one.
+        observed_probability = np.clip(observed_probability, 1e-64, 1.0)
+        return float(-np.log(observed_probability).sum())
+
+    def fit(self, data, num_iterations=20, max_workers=None):
+        workers = max_workers or os.cpu_count()
+        futures = []
+        results = []
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            for participant_id, participant_data in data.items():
+                future = executor.submit(fit_participant, self, participant_id, participant_data,
+                                         self.model_type, num_iterations)
+                futures.append(future)
+            for future in futures:
+                results.append(future.result())
+        return pd.DataFrame(results)
+
+    def evaluate(self, params, data):
+        results = []
+        for participant_id, participant_data in data.items():
+            participant_params = np.asarray(params.loc[participant_id], dtype=float)
+            choice = np.asarray(participant_data['choice'], dtype=int)
+            p_correct = self.probability_correct(
+                participant_params, participant_data['CTI'], participant_data['switch_type'],
+                participant_data['task_type'], participant_data['response_congruent'],
+                participant_data['block_duration'])
+            observed_probability = np.where(choice == 1, p_correct, 1 - p_correct)
+            observed_probability = np.clip(observed_probability, 1e-64, 1.0)
+            trial_nll = -np.log(observed_probability)
+            n_correct = int(((p_correct > 0.5).astype(int) == choice).sum())
+            results.append({'participant_id': participant_id,
+                            'total_nll': float(trial_nll.sum()), 'mean_nll': float(trial_nll.mean()),
+                            'accuracy': n_correct / len(choice), 'n_trials': len(choice),
+                            'n_correct': n_correct})
+        return pd.DataFrame(results)
+
+
 # Helper function to convert a dataframe into a dictionary of participant data
 def dict_generator_cognitive(df, task='dd'):
     """
@@ -964,6 +1197,14 @@ def dict_generator_cognitive(df, task='dd'):
             'trial_condition': ['trial_condition'],
             'response_time': ['response_time'],
             'responded': ['responded'],
+            'block_duration': ['block_duration'],
+            'choice': ['correct'],
+        },
+        'twobytwo': {
+            'CTI': ['CTI'],
+            'switch_type': ['switch_type'],
+            'task_type': ['task_type'],
+            'response_congruent': ['response_congruent'],
             'block_duration': ['block_duration'],
             'choice': ['correct'],
         },
