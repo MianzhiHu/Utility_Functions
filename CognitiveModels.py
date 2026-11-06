@@ -573,10 +573,12 @@ class StopSignal:
             groups, inverse = np.unique(predictors, axis=0, return_inverse=True)
             nodes, weights = roots_legendre(self.quadrature_nodes)
             length = np.where(groups[:, 0] == 1, np.maximum(groups[:, 2] - groups[:, 1], 0), groups[:, 2])
-            points = length[:, None] * (nodes[None, :] + 1) / 2
-            weights = length[:, None] * weights[None, :] / 2
-            self._quadrature_cache = (cache_key, groups, inverse, points, weights)
-        _, groups, inverse, points, weights = self._quadrature_cache
+            unit_points = (nodes + 1) / 2
+            unit_weights = weights / 2
+            points = length[:, None] * unit_points
+            weights = length[:, None] * unit_weights
+            self._quadrature_cache = (cache_key, groups, inverse, points, weights, unit_points, unit_weights)
+        _, groups, inverse, points, weights, unit_points, unit_weights = self._quadrature_cache
 
         # Generate the ex-Gaussian runners
         correct_go, error_go, stop_runner = self.horse_race_exgau_function()
@@ -606,7 +608,29 @@ class StopSignal:
             # Go correctness and stop correctness are different events.
             p_correct_by_group = np.where(stopping, p_correct_stop, p_correct_go)
             p_correct = p_correct_by_group[inverse]
-            observed_probability = np.where(choice == 1, p_correct, 1 - p_correct)
+            # Calculate incorrect events directly; 1 - p_correct loses tiny error probabilities.
+            p_incorrect_by_group = np.empty(len(groups))
+            t = points[go_groups]
+            deadline = groups[go_groups, 2]
+            # Incorrect go = error runner wins, or neither go runner finishes by the deadline.
+            p_incorrect_by_group[go_groups] = (
+                np.sum(weights[go_groups] * error_go.pdf(t) * correct_go.sf(t), axis=1)
+                + correct_go.sf(deadline) * error_go.sf(deadline))
+            # Incorrect stop = either go runner finishes before stopping can prevent it.
+            # Before the signal, no stop runner can inhibit a response.
+            before = np.minimum(groups[stop_groups, 1], groups[stop_groups, 2])
+            t_before = before[:, None] * unit_points
+            response_before = np.sum(before[:, None] * unit_weights * (
+                correct_go.pdf(t_before) * error_go.sf(t_before)
+                + error_go.pdf(t_before) * correct_go.sf(t_before)), axis=1)
+            # After the signal, a response requires trigger failure or an unfinished stop runner.
+            not_stopped = self.p_trigger_failure + (1 - self.p_trigger_failure) * stop_runner.sf(u)
+            response_after = np.sum(weights[stop_groups] * (
+                correct_go.pdf(go_time) * error_go.sf(go_time)
+                + error_go.pdf(go_time) * correct_go.sf(go_time)) * not_stopped, axis=1)
+            p_incorrect_by_group[stop_groups] = response_before + response_after
+            p_incorrect = p_incorrect_by_group[inverse]
+            observed_probability = np.where(choice == 1, p_correct, p_incorrect)
             log_likelihood = np.log(np.maximum(observed_probability, 1e-64))
             return log_likelihood, p_correct
 
@@ -685,10 +709,12 @@ class StopSignal:
             groups, inverse = np.unique(predictors, axis=0, return_inverse=True)
             nodes, weights = roots_legendre(self.quadrature_nodes)
             length = np.where(groups[:, 0] == 1, np.maximum(groups[:, 2] - groups[:, 1], 0), groups[:, 2])
-            points = length[:, None] * (nodes[None, :] + 1) / 2
-            weights = length[:, None] * weights[None, :] / 2
-            self._quadrature_cache = (cache_key, groups, inverse, points, weights)
-        _, groups, inverse, points, weights = self._quadrature_cache
+            unit_points = (nodes + 1) / 2
+            unit_weights = weights / 2
+            points = length[:, None] * unit_points
+            weights = length[:, None] * unit_weights
+            self._quadrature_cache = (cache_key, groups, inverse, points, weights, unit_points, unit_weights)
+        _, groups, inverse, points, weights, unit_points, unit_weights = self._quadrature_cache
 
         # Generate the ex-Gaussian runners
         correct_go, error_go, stop_runner = self.horse_race_exgau_function()
@@ -735,7 +761,35 @@ class StopSignal:
             # Go correctness and stop correctness are different events.
             p_correct_by_group = np.where(stopping, p_correct_stop, p_correct_go)
             p_correct = p_correct_by_group[inverse]
-            observed_probability = np.where(choice == 1, p_correct, 1 - p_correct)
+            # Calculate incorrect events directly; 1 - p_correct loses tiny error probabilities.
+            p_incorrect_by_group = np.empty(len(groups))
+            # Noncritical incorrect go = error runner wins, or both runners miss the deadline.
+            t = points[noncrit_go_groups]
+            deadline = groups[noncrit_go_groups, 2]
+            p_incorrect_by_group[noncrit_go_groups] = (
+                np.sum(weights[noncrit_go_groups] * error_go.pdf(t) * correct_go.sf(t), axis=1)
+                + correct_go.sf(deadline) * error_go.sf(deadline))
+            # The same calculation with scaled go runners for critical trials.
+            t = points[critical_go_groups]
+            deadline = groups[critical_go_groups, 2]
+            p_incorrect_by_group[critical_go_groups] = (
+                np.sum(weights[critical_go_groups] * error_go_critical.pdf(t) * correct_go_critical.sf(t), axis=1)
+                + correct_go_critical.sf(deadline) * error_go_critical.sf(deadline))
+            # Incorrect stop = either go runner finishes before stopping can prevent it.
+            # Before the signal, no stop runner can inhibit a response.
+            before = np.minimum(groups[stop_groups, 1], groups[stop_groups, 2])
+            t_before = before[:, None] * unit_points
+            response_before = np.sum(before[:, None] * unit_weights * (
+                correct_go_critical.pdf(t_before) * error_go_critical.sf(t_before)
+                + error_go_critical.pdf(t_before) * correct_go_critical.sf(t_before)), axis=1)
+            # After the signal, a response requires trigger failure or an unfinished stop runner.
+            not_stopped = self.p_trigger_failure + (1 - self.p_trigger_failure) * stop_runner_critical.sf(u)
+            response_after = np.sum(weights[stop_groups] * (
+                correct_go_critical.pdf(go_time) * error_go_critical.sf(go_time)
+                + error_go_critical.pdf(go_time) * correct_go_critical.sf(go_time)) * not_stopped, axis=1)
+            p_incorrect_by_group[stop_groups] = response_before + response_after
+            p_incorrect = p_incorrect_by_group[inverse]
+            observed_probability = np.where(choice == 1, p_correct, p_incorrect)
             log_likelihood = np.log(np.maximum(observed_probability, 1e-64))
             return log_likelihood, p_correct
 
@@ -1010,8 +1064,7 @@ class TwoByTwo:
         # Each runner's drift is independently truncated above zero.
         correct_pdf = correct_pdf / norm.cdf(drift)
         error_cdf = error_cdf / norm.cdf(self.error_drift)
-        correct_by_deadline = decision_time / 2 * np.sum(
-            self.weights * correct_pdf * (1 - error_cdf))
+        correct_by_deadline = decision_time / 2 * np.sum(self.weights * correct_pdf * (1 - error_cdf))
         return float(correct_by_deadline)
 
     def compound_cue_function(self, cti, transition, task_type, congruent, deadline):

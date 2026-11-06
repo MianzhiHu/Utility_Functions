@@ -69,6 +69,53 @@ def _style_bar_axis(ax, ylabel, title='', x_rotation=45, tick_size=18, label_siz
     sns.despine(ax=ax)
 
 
+def get_pls_results(lv_path, boot_ratio_path, var_names, method='fdr_bh', p=.05, LV=1,
+                    anchor_variable=None):
+    """Read one PLS LV and impose a deterministic, shared sign convention.
+
+    By default, the predictor with the largest absolute weight is oriented
+    positive. Pass ``anchor_variable`` to use an explicit positive anchor.
+    Reuse ``df.attrs['orientation']`` when plotting this LV's outcomes.
+    File paths are read as supplied (absolute or relative to the working directory).
+    """
+    col = LV - 1
+    lv_vals = sio.loadmat(lv_path, variable_names=['u1'])
+    boot_ratio = sio.loadmat(boot_ratio_path, variable_names=['bsrs1'])
+
+    u1 = lv_vals['u1'][:, col]
+    boot_ratio = boot_ratio['bsrs1'][:, col]
+
+    if len(u1) != len(var_names):
+        raise ValueError(
+            f'LV has {len(u1)} weights, but {len(var_names)} names were supplied.'
+        )
+    if anchor_variable is None:
+        if not np.isfinite(u1).any():
+            raise ValueError('Cannot orient an LV with no finite weights.')
+        anchor_idx = int(np.nanargmax(np.abs(u1)))
+    else:
+        try:
+            anchor_idx = list(var_names).index(anchor_variable)
+        except ValueError as exc:
+            raise ValueError(f'Unknown anchor variable: {anchor_variable}') from exc
+        if not np.isfinite(u1[anchor_idx]) or np.isclose(u1[anchor_idx], 0):
+            raise ValueError(f'Anchor {anchor_variable} has a zero or non-finite weight.')
+
+    orientation = 1 if u1[anchor_idx] >= 0 else -1
+    u1 = orientation * u1
+    boot_ratio = orientation * boot_ratio
+
+    result = np.column_stack((u1, boot_ratio))
+    df = pd.DataFrame(result, columns=['u1', 'boot_ratio'])
+    df['p_value'] = 2 * (1 - norm.cdf(abs(df['boot_ratio'])))
+    df['p_value_adjusted'] = multipletests(df['p_value'], method=method)[1]
+    df['significant'] = abs(df['p_value_adjusted']) < p
+    df.insert(0, 'Variable', var_names)
+    df.attrs['orientation'] = orientation
+    df.attrs['anchor_variable'] = list(var_names)[anchor_idx]
+    return df
+
+
 def plot_predictor_results(df, title='', ylabel='Semantic Loadings', figsize=(12, 6), only_sig=True,
                              abs_ordering=True, save_path=None, reverse_sign=False):
     """
