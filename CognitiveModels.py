@@ -154,6 +154,58 @@ class DelayedDiscounting:
 
         return float(total_nll)
 
+    def simulate(self, n_participants, n_trials, large_amount_range, later_delay_range, small_amount_range, manual_bounds=None):
+        """Return simulated trials with participant generating parameters as columns.
+
+        Parameters (t, k, and s for hyperboloid) are repeated on each trial so
+        they are preserved by DataFrame.to_csv(..., index=False). The generating
+        dictionary is retained for compatibility with existing callers.
+        Amounts and delays are sampled as integers within inclusive ranges.
+        """
+        simulated_data = []
+        integer_ranges = []
+        for low, high in (large_amount_range, later_delay_range, small_amount_range):
+            low, high = int(np.ceil(low)), int(np.floor(high))
+            integer_ranges.append((low, high + 1))
+        if manual_bounds is not None:
+            bounds = manual_bounds
+        else:
+            bounds = model_bounds[self.model_type]
+
+        for participant_id in range(n_participants):
+            # Randomly sample parameters within the bounds for this model
+            params = [np.random.uniform(low, high) for (low, high) in bounds]
+            for attr, idx in self._param_map[self.model_type].items():
+                setattr(self, attr, params[idx])
+            generating = {name: getattr(self, name) for name in self._param_map[self.model_type]}
+
+            for trial in range(n_trials):
+                large_amount = np.random.randint(*integer_ranges[0])
+                later_delay = np.random.randint(*integer_ranges[1])
+                small_amount = np.random.randint(*integer_ranges[2])
+
+                # Compute subjective values and choice probabilities
+                subjective_value = self._function_map[self.model_type](large_amount, later_delay)
+                values = np.array([small_amount, subjective_value])
+                probabilities = self.softmax(values.reshape(1, -1)).flatten()
+
+                # Simulate choice based on probabilities
+                choice = np.random.choice([0, 1], p=probabilities)
+
+                # Record generating parameters and trial data
+                simulated_data.append({
+                    'participant_id': participant_id,
+                    'model_type': self.model_type,
+                    'trial': trial,
+                    'large_amount': large_amount,
+                    'later_delay': later_delay,
+                    'small_amount': small_amount,
+                    'choice': choice,
+                    **generating
+                })
+
+        return pd.DataFrame(simulated_data)
+
     def fit(self, data, num_iterations=20, max_workers=None):
         # Detect how many works we have
         workers = max_workers or os.cpu_count()

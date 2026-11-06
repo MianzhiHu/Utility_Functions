@@ -117,7 +117,7 @@ def fit_participant(model, participant_id, pdata, model_type, num_iterations=100
             result = minimize(model.negative_log_likelihood, initial_guess,
                               args=(pdata['reward'], pdata['choice'], pdata['choiceset']),
                               bounds=bounds, method='L-BFGS-B', options={'maxiter': 10000})
-        elif model.task == 'IGT_SGT':
+        elif model.task in ('IGT_SGT', 'daw_exploration'):
             result = minimize(model.negative_log_likelihood, initial_guess,
                               args=(pdata['reward'], pdata['choice']),
                               bounds=bounds, method='L-BFGS-B', options={'maxiter': 10000})
@@ -244,8 +244,15 @@ class ComputationalModels:
                 'sampler_decay_AV': 'a',
                 'delta_decay': 'a',
             }
-        elif num_params == 3:
+        else:
             self._B_OVERRIDES = {}
+
+        # Keep parameter assignment consistent with get_bounds for the variants
+        # whose learning and forgetting rates can be shared or independent.
+        for name in ('delta_decay', 'sampler_decay', 'sampler_decay_PE', 'sampler_decay_AV'):
+            self._PARAM_MAP[name] = {'t': 0, 'a': 1}
+            if num_params == 3:
+                self._PARAM_MAP[name]['b'] = 2
 
         # initialize all attributes to None
         for attr in self._DEFAULT_ATTRS:
@@ -374,7 +381,7 @@ class ComputationalModels:
 
         if task == 'ABCD':
             self.nll_function = self.nll_mapping_ABCD[self.model_type]
-        elif task == 'IGT_SGT':
+        elif task in ('IGT_SGT', 'daw_exploration'):
             self.nll_function = self.nll_mapping_IGT_SGT[self.model_type]
 
         # Mapping of choice sets to pairs of options
@@ -455,7 +462,7 @@ class ComputationalModels:
         self.EVs_raw = self.initial_EV.copy()
         self.UVs = np.full(self.num_options, self.unc ** 2)
         self.Probs = np.full(self.num_options, 1 / self.num_options)
-        self.mean = np.mean(self.initial_EV.copy())
+        self.mean = self.initial_EV.copy()
         self.AV = np.mean(self.initial_EV.copy())
         self.var = self.initial_var.copy()
 
@@ -544,7 +551,7 @@ class ComputationalModels:
             self.EVs[option] = np.dot(probabilities, rewards)
         else:
             # If there are no activated memories or no history at all, set the EV to the default value
-            self.EVs[option] = self.condition_initialization[self.condition]
+            self.EVs[option] = self.initial_EV[option]
 
     def determine_alt_option(self, choiceset, chosen):
         """
@@ -571,24 +578,23 @@ class ComputationalModels:
 
         for res in dict:
             sim_num = res['simulation_num']
-            a_val = res['a']
-            b_val = res['b']
-            t_val = res['t']
-            lambda_val = res['lamda']
-            tau_val = res['tau']
             for trial_idx, trial_detail in zip(res['trial_indices'], res['trial_details']):
                 data_row = {
                     'simulation_num': sim_num,
                     'trial_index': trial_idx,
-                    'a': a_val,
-                    'b': b_val,
-                    't': t_val,
-                    'tau': tau_val,
-                    'lambda': lambda_val,
+                    'a': res.get('a'),
+                    'b': res.get('b'),
+                    't': res.get('t'),
+                    'tau': res.get('tau'),
+                    'lambda': res.get('lamda'),
                     'pair': trial_detail['pair'],
                     'choice': trial_detail['choice'],
                     'reward': trial_detail['reward'],
                 }
+                data_row.update(res.get('parameters', {}))
+                data_row.update({key: res[key] for key in ('task', 'model_type', 'parameter_values') if key in res})
+                data_row.update({key: trial_detail[key] for key in ('reward_means', 'reward_mean')
+                                 if key in trial_detail})
                 all_sims.append(data_row)
 
         return pd.DataFrame(all_sims)
@@ -872,18 +878,19 @@ class ComputationalModels:
         self.chosen_history[chosen].append(current_trial)
         self.reward_history_by_option[chosen].append(reward)
 
-        # determine the alternative option
-        alt_option = self.determine_alt_option(choiceset, chosen)
-
         # Calculate activation levels for previous occurrences of the current combination
         activations, corresponding_rewards = self.activation_calculation(chosen, current_trial,
                                                                          exclude_current_trial=True)
-        alt_activations, alt_corresponding_rewards = self.activation_calculation(alt_option, current_trial,
-                                                                                 exclude_current_trial=False)
-
-        # Calculate probabilities using softmax rule if there are valid activations and update EVs
         self.EV_calculation(chosen, corresponding_rewards, activations)
-        self.EV_calculation(alt_option, alt_corresponding_rewards, alt_activations)
+
+        # Unrestricted tasks have several alternatives; ABCD has only one.
+        alternatives = (self.possible_options if choiceset is None else
+                        self.choiceset_mapping[0][choiceset] if isinstance(choiceset, (int, np.integer)) else
+                        choiceset)
+        for option in alternatives:
+            if option != chosen:
+                activations, rewards = self.activation_calculation(option, current_trial)
+                self.EV_calculation(option, rewards, activations)
 
     def update(self, chosen, reward, trial, choiceset=None):
         """
@@ -899,89 +906,142 @@ class ComputationalModels:
 
         self.updating_function(chosen, reward, trial, choiceset)
 
-    def simulate(self, reward_means, reward_sd, AB_freq, CD_freq, num_trials=250, num_iterations=1000,
-                 beta_lower=-1, beta_upper=1):
-        """
-        Simulate the EV updates for a given number of trials and specified number of iterations.
+    def simulate(self, reward_means=None, reward_sd=None,
+                 AB_freq=None, CD_freq=None,
+                 num_trials=None, num_iterations=100, *, parameters=None,
+                 initial_EV=None, initial_var=None,
+                 num_training_trials=None, drift_rate=0.9836, drift_center=50.0,
+                 drift_sd=2.8, reward_bounds=(1, 100)):
+        """Simulate Gaussian rewards using the model's fitting parameterization.
 
-        Parameters:
-        - num_trials: Number of trials for the simulation.
-        - AB_freq: Frequency of appearance for the AB pair in the first 150 trials.
-        - CD_freq: Frequency of appearance for the CD pair in the first 150 trials.
-        - num_iterations: Number of times to repeat the simulation.
-        - beta_lower: Lower bound for the beta parameter.
-        - beta_upper: Upper bound for the beta parameter.
+        ``parameters`` accepts a vector in fitting order, a dict of parameter
+        names, or a matrix with one row per iteration. If omitted, each iteration
+        samples uniformly from ``get_bounds`` (a recovery design, not fitted
+        participant estimates). All generating parameters are returned as columns.
 
-        Returns:
-        - A list of simulation results.
+        ABCD uses AB_freq/CD_freq. Generated training length is
+        AB_freq + CD_freq; remaining trials are balanced across transfer pairs.
+        IGT_SGT offers every option on every trial, inferring their number from
+        reward_means. It does not require pair frequencies.
+
+        daw_exploration follows the experiment in
+        D:/jatos_win_java/study_assets_root/Nature_Cog/DawTask.html: four means
+        start at 50, observation SD is 4, and the default length is 150 trials
+        (250 for other tasks; pass num_trials=250 for DawTask_background.html).
+        After each reward, ALL means evolve as
+        drift_rate * mean + (1 - drift_rate) * drift_center + N(0, drift_sd).
+        Rewards are rounded as in JavaScript Math.round, then bounded to [1, 100].
+        Latent means are not bounded. reward_means/reward_sd override the starting
+        means/observation noise; drift arguments override the experiment defaults.
+        Output reward_means contains the full latent vector BEFORE each reward;
+        reward_mean is the chosen option's latent mean, without display rounding.
+
+        ``num_training_trials`` controls how many trials update the model. Its
+        default is the generated ABCD training length, or all trials for IGT_SGT,
+        and daw_exploration. Transfer choices therefore use learned values
+        without further updates, matching fitting. Initial EVs/variances default
+        to 0 and 1/12, as in fit(); pass vectors to override them explicitly.
         """
+
+        is_daw = self.task == 'daw_exploration'
+        if num_trials is None:
+            num_trials = 150 if is_daw else 250
+        if is_daw and reward_means is None:
+            reward_means = [50.0] * 4
+        if is_daw and reward_sd is None:
+            reward_sd = 4.0
+        means = np.asarray(reward_means, dtype=float)
+        n_options = len(means)
+        if is_daw:
+            limits = np.asarray(reward_bounds, dtype=float)
+
+        sds = np.full(n_options, float(reward_sd))
+        initial_values = np.full(n_options, float(initial_EV) if initial_EV is not None else np.full(n_options, 0.0))
+        initial_variances = np.full(n_options, float(initial_var) if initial_var is not None else np.full(n_options, 1.0 / 12.0))
+
+        if self.task == 'IGT_SGT' or is_daw:
+            training_length = num_trials
+        elif self.task == 'ABCD':
+            training_length = AB_freq + CD_freq
+
+        update_trials = training_length if num_training_trials is None else num_training_trials
+        bounds = np.asarray(get_bounds(self.model_type, self), dtype=float)
+
+        # param_EV can be added by fit(); simulation initialization is explicit.
+        cfg = {name: idx for name, idx in self._PARAM_MAP[self.model_type].items() if name != 'param_EV'}
+        if isinstance(parameters, dict):
+            parameters = [parameters[name] for name in sorted(cfg, key=cfg.get)]
+
+        parameter_rows = None
+        if parameters is not None:
+            parameter_rows = np.asarray(parameters, dtype=float)
+            if parameter_rows.shape == (len(bounds),):
+                parameter_rows = np.tile(parameter_rows, (num_iterations, 1))
+
+        self.num_options = n_options
+        self.possible_options = list(range(n_options))
+        self.initial_EV, self.initial_var = initial_values, initial_variances
         all_results = []
-
         for iteration in range(num_iterations):
-
-            print(f"Iteration {iteration + 1} of {num_iterations}")
-
+            params = (np.random.uniform(bounds[:, 0], bounds[:, 1]) if parameter_rows is None else
+                      parameter_rows[iteration])
+            for name, idx in cfg.items():
+                setattr(self, name, float(params[idx]))
+            if self.model_type in self._B_OVERRIDES:
+                self.b = getattr(self, self._B_OVERRIDES[self.model_type])
             self.reset()
+            current_means = means.copy()
 
-            self.s = np.random.uniform(0.0001, 0.9999) if self.model_type == 'ACTR_Ori' else None
-            self.t = np.random.uniform(0, 4.9999)
-            self.a = np.random.uniform()  # Randomly set decay parameter between 0 and 1
-            self.b = np.random.uniform(beta_lower, beta_upper) if self.num_params == 3 else self.a
-            self.tau = np.random.uniform(-1.9999, -0.0001) if self.model_type in ('ACTR', 'ACTR_Ori') else None
-            self.lamda = np.random.uniform(0.0001, 0.9999) if self.model_type == 'mean_var_utility' else None
-            self.choices_count = np.zeros(self.num_options)
+            if self.task == 'IGT_SGT' or is_daw:
+                trial_sequence = [tuple(self.possible_options)] * num_trials
+            else:
+                training = [(0, 1)] * AB_freq + [(2, 3)] * CD_freq
+                np.random.shuffle(training)
+                pairs = [(2, 0), (1, 3), (0, 3), (2, 1)]
+                n_transfer = num_trials - training_length
+                transfer = pairs * (n_transfer // len(pairs))
+                # Randomize which pairs receive an extra trial when not divisible by four.
+                transfer += [pairs[i] for i in np.random.permutation(len(pairs))[:n_transfer % len(pairs)]]
+                np.random.shuffle(transfer)
+                trial_sequence = training + transfer
 
-            EV_history = np.zeros((num_trials, self.num_options))
             trial_details = []
-            trial_indices = []
-
-            training_trials = [(0, 1), (2, 3)]
-            training_trial_sequence = [training_trials[0]] * AB_freq + [training_trials[1]] * CD_freq
-            np.random.shuffle(training_trial_sequence)
-
-            # Distributing the next 100 trials equally among the four pairs (AC, AD, BC, BD)
-            transfer_trials = [(2, 0), (1, 3), (0, 3), (2, 1)]
-            transfer_trial_sequence = transfer_trials * 25
-            np.random.shuffle(transfer_trial_sequence)
-
-            for trial in range(num_trials):
-                trial_indices.append(trial + 1)
-
-                if trial < 150:
-                    pair = training_trial_sequence[trial]
-                    optimal, suboptimal = (pair[0], pair[1])
-                    prob_optimal = self.softmax_mapping[self.model_type](np.array([self.EVs[optimal],
-                                                                                   self.EVs[suboptimal]]))[0]
-                    chosen = optimal if np.random.rand() < prob_optimal else suboptimal
+            for trial, options in enumerate(trial_sequence, start=1):
+                indices = list(options)
+                if self.model_type.startswith('WSLS'):
+                    probabilities = self.Probs[indices].copy()
+                    probabilities /= probabilities.sum()
+                elif self.model_type in ('kalman_filter_bonus', 'kalman_decay_bonus'):
+                    probabilities = self.softmax_exploration(self.EVs[indices], self.var[indices])
                 else:
-                    pair = transfer_trial_sequence[trial - 150]
-                    optimal, suboptimal = (pair[0], pair[1])
-                    prob_optimal = self.softmax_mapping[self.model_type](np.array([self.EVs[optimal],
-                                                                                  self.EVs[suboptimal]]))[0]
-                    chosen = optimal if np.random.rand() < prob_optimal else suboptimal
+                    probabilities = self.softmax_mapping[self.model_type](self.EVs[indices])
+                chosen = int(np.random.choice(indices, p=probabilities))
+                reward = float(np.random.normal(current_means[chosen], sds[chosen]))
+                detail = {'pair': tuple(chr(65 + i) for i in options),
+                          'choice': chr(65 + chosen), 'reward': reward}
+                if is_daw:
+                    # Math.round(x) uses floor(x + 0.5), unlike NumPy's ties-to-even rule.
+                    reward = float(np.clip(np.floor(reward + 0.5), limits[0], limits[1]))
+                    detail.update(reward=reward, reward_means=tuple(current_means),
+                                  reward_mean=float(current_means[chosen]))
+                    # The experiment drifts every deck after payoff, even when unchosen.
+                    current_means = (drift_rate * current_means + (1 - drift_rate) * drift_center +
+                                     np.random.normal(0, drift_sd, size=n_options))
+                trial_details.append(detail)
+                if trial <= update_trials:
+                    self.update(chosen, reward, trial, options if self.task == 'ABCD' else None)
 
-                reward = np.random.normal(reward_means[chosen], reward_sd[chosen])
-                trial_details.append(
-                    {"trial": trial + 1, "pair": (chr(65 + pair[0]), chr(65 + pair[1])), "choice": chr(65 + chosen),
-                     "reward": reward})
-
-                self.update(chosen, reward, trial + 1, pair)
-                EV_history[trial] = self.EVs
-
+            generating = {name: getattr(self, name) for name in cfg}
             all_results.append({
-                "simulation_num": iteration + 1,
-                "trial_indices": trial_indices,
-                "s": self.s,
-                "t": self.t,
-                "a": self.a,
-                "b": self.b,
-                "tau": self.tau,
-                "lamda": self.lamda,
-                "weight": self.w,
-                "trial_details": trial_details,
-                "EV_history": EV_history
+                'simulation_num': iteration + 1,
+                'trial_indices': list(range(1, num_trials + 1)),
+                'task': self.task, 'model_type': self.model_type,
+                'parameter_values': tuple(float(p) for p in params),
+                'parameters': generating,
+                **{name: getattr(self, name) if name in cfg or name == 'b' and self.model_type in
+                   self._B_OVERRIDES else None for name in ('a', 'b', 't', 'tau', 'lamda')},
+                'trial_details': trial_details,
             })
-
         return self.simulation_unpacker(all_results)
 
     # ==================================================================================================================
@@ -1772,6 +1832,9 @@ def dict_generator(df, task='ABCD'):
             'react_time': ['RT']
         }
     }
+
+    # Daw is an unrestricted choice task for likelihood and input preparation.
+    COLUMN_MAP['daw_exploration'] = COLUMN_MAP['IGT_SGT']
 
     if task not in COLUMN_MAP:
         raise ValueError(f"Unsupported task {task!r}")
