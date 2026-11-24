@@ -37,6 +37,23 @@ def random_initial_guess(bounds):
     return [np.random.uniform(low, high) for (low, high) in bounds]
 
 
+def _simulation_parameters(model, n_participants, rng, parameters, manual_bounds):
+    param_map = model._param_map[model.model_type]
+    if parameters is None:
+        bounds = model_bounds[model.model_type] if manual_bounds is None else manual_bounds
+        low, high = np.asarray(bounds, dtype=float).T
+        parameters = rng.uniform(low, high, size=(n_participants, len(param_map)))
+    elif isinstance(parameters, dict):
+        parameters = [parameters[name] for name in sorted(param_map, key=param_map.get)]
+
+    parameters = np.asarray(parameters, dtype=float)
+    if parameters.ndim == 1:
+        parameters = np.tile(parameters, (n_participants, 1))
+    if parameters.shape != (n_participants, len(param_map)):
+        raise ValueError('Supply one parameter vector or one vector per participant')
+    return parameters
+
+
 def fit_participant(model, participant_id, pdata, model_type, num_iterations=1000):
     print(f"Fitting participant {participant_id}...")
     start_time = time.time()
@@ -154,57 +171,49 @@ class DelayedDiscounting:
 
         return float(total_nll)
 
-    def simulate(self, n_participants, n_trials, large_amount_range, later_delay_range, small_amount_range, manual_bounds=None):
-        """Return simulated trials with participant generating parameters as columns.
+    def simulate(self, n_participants=1, n_trials=None, large_amount_range=None,
+                 later_delay_range=None, small_amount_range=None, manual_bounds=None, *,
+                 trials=None, parameters=None, seed=None):
+        """Simulate choices for a trial design or draw amounts and delays from inclusive ranges.
 
-        Parameters (t, k, and s for hyperboloid) are repeated on each trial so
-        they are preserved by DataFrame.to_csv(..., index=False). The generating
-        dictionary is retained for compatibility with existing callers.
-        Amounts and delays are sampled as integers within inclusive ranges.
+        Pass a DataFrame with large_amount, later_delay and small_amount, or
+        supply n_trials and all three ranges. Parameters can be a named dict,
+        a vector in fitting order, or a matrix with one row per participant.
+        By default, draw parameters uniformly from model_bounds or manual_bounds.
+        The returned DataFrame includes the generating parameters on every trial.
         """
-        simulated_data = []
-        integer_ranges = []
-        for low, high in (large_amount_range, later_delay_range, small_amount_range):
-            low, high = int(np.ceil(low)), int(np.floor(high))
-            integer_ranges.append((low, high + 1))
-        if manual_bounds is not None:
-            bounds = manual_bounds
-        else:
-            bounds = model_bounds[self.model_type]
+        rng = np.random.default_rng(seed)
+        param_map = self._param_map[self.model_type]
+        parameter_rows = _simulation_parameters(self, n_participants, rng, parameters, manual_bounds)
+        predictors = self.input_columns[:-1]
+        simulated = []
 
-        for participant_id in range(n_participants):
-            # Randomly sample parameters within the bounds for this model
-            params = [np.random.uniform(low, high) for (low, high) in bounds]
-            for attr, idx in self._param_map[self.model_type].items():
-                setattr(self, attr, params[idx])
-            generating = {name: getattr(self, name) for name in self._param_map[self.model_type]}
-
-            for trial in range(n_trials):
-                large_amount = np.random.randint(*integer_ranges[0])
-                later_delay = np.random.randint(*integer_ranges[1])
-                small_amount = np.random.randint(*integer_ranges[2])
-
-                # Compute subjective values and choice probabilities
-                subjective_value = self._function_map[self.model_type](large_amount, later_delay)
-                values = np.array([small_amount, subjective_value])
-                probabilities = self.softmax(values.reshape(1, -1)).flatten()
-
-                # Simulate choice based on probabilities
-                choice = np.random.choice([0, 1], p=probabilities)
-
-                # Record generating parameters and trial data
-                simulated_data.append({
-                    'participant_id': participant_id,
-                    'model_type': self.model_type,
-                    'trial': trial,
-                    'large_amount': large_amount,
-                    'later_delay': later_delay,
-                    'small_amount': small_amount,
-                    'choice': choice,
-                    **generating
+        for participant_id, params in enumerate(parameter_rows):
+            if trials is None:
+                ranges = [large_amount_range, later_delay_range, small_amount_range]
+                design = pd.DataFrame({
+                    name: rng.integers(int(np.ceil(low)), int(np.floor(high)) + 1, size=n_trials)
+                    for name, (low, high) in zip(predictors, ranges)
                 })
+            else:
+                design = trials[predictors]
 
-        return pd.DataFrame(simulated_data)
+            generating = {name: params[idx] for name, idx in param_map.items()}
+            for name, value in generating.items():
+                setattr(self, name, value)
+            subjective_value = self._function_map[self.model_type](
+                design['large_amount'].to_numpy(dtype=float), design['later_delay'].to_numpy(dtype=float))
+            values = np.column_stack([design['small_amount'].to_numpy(dtype=float), subjective_value])
+            p_later = self.softmax(values)[:, 1]
+            choice = (rng.random(len(design)) < p_later).astype(int)
+            simulated.append(design.assign(
+                participant_id=participant_id, model_type=self.model_type,
+                trial=np.arange(len(design)), choice=choice, **generating))
+
+        if not simulated:
+            return pd.DataFrame()
+        columns = ['participant_id', 'model_type', 'trial', *self.input_columns, *param_map]
+        return pd.concat(simulated, ignore_index=True)[columns]
 
     def fit(self, data, num_iterations=20, max_workers=None):
         # Detect how many works we have
@@ -344,6 +353,36 @@ class ColumbiaCardTask:
         total_nll = trial_nll.sum()
         return float(total_nll)
 
+    def simulate(self, trials, n_participants=1, *, parameters=None, manual_bounds=None, seed=None):
+        """Simulate draw (1) or end (0) for each row of a CCT decision design.
+
+        Supply gain_amount, loss_amount, gain_probability and loss_probability.
+        The same design is used for each participant. Parameters can be a named
+        dict, a vector in fitting order, or one row per participant. If omitted,
+        they are drawn from model_bounds or manual_bounds and returned as columns.
+        """
+        rng = np.random.default_rng(seed)
+        design = trials[self.input_columns[:-1]]
+        predictors = [design[name].to_numpy(dtype=float) for name in design]
+        param_map = self._param_map[self.model_type]
+        parameter_rows = _simulation_parameters(self, n_participants, rng, parameters, manual_bounds)
+        simulated = []
+
+        for participant_id, params in enumerate(parameter_rows):
+            generating = {name: params[idx] for name, idx in param_map.items()}
+            for name, value in generating.items():
+                setattr(self, name, value)
+            # Prelec weights allow zero and one as limiting probabilities.
+            with np.errstate(divide='ignore'):
+                utility = self._function_map[self.model_type](*predictors)
+            p_draw = self.softmax(np.column_stack([np.zeros(len(design)), utility]))[:, 1]
+            choice = (rng.random(len(design)) < p_draw).astype(int)
+            simulated.append(design.assign(
+                participant_id=participant_id, model_type=self.model_type,
+                trial=np.arange(len(design)), choice=choice, **generating))
+
+        return pd.concat(simulated, ignore_index=True)
+
     def fit(self, data, num_iterations=20, max_workers=None):
         # Detect how many works we have
         workers = max_workers or os.cpu_count()
@@ -429,6 +468,15 @@ class _PositiveExGaussian:
         self.mu, self.sigma, self.tau = mu, sigma, tau
         self.distribution = exponnorm(tau / sigma, loc=mu, scale=sigma)
         self.positive_probability = self.distribution.sf(0)
+
+    def rvs(self, n_trials, rng):
+        """Draw positive finishing times from the truncated distribution."""
+        times = self.distribution.rvs(size=n_trials, random_state=rng)
+        rejected = times <= 0
+        while rejected.any():
+            times[rejected] = self.distribution.rvs(size=rejected.sum(), random_state=rng)
+            rejected = times <= 0
+        return times
 
     def pdf(self, t):
         # Truncation removes negative times and renormalizes the remaining density.
@@ -975,6 +1023,61 @@ class StopSignal:
         log_likelihood, _ = self._function_map[self.model_type](params, SS_delay, trial_condition, response_time, responded, choice, block_duration)
         return float(-log_likelihood.sum())
 
+    def simulate(self, trials, n_participants=1, *, parameters=None, manual_bounds=None, seed=None):
+        """Simulate each row of a stop-signal or motor trial design.
+
+        Supply SS_delay, trial_condition and block_duration in the fitting
+        format (times are seconds). Ex-Gaussian races generate correctness,
+        response status and RT. Logistic and RDEX generate correctness from
+        their choice likelihood and leave response status and RT as NaN.
+        Parameters can be a dict, a vector in fitting order, or one row per
+        participant. They default to uniform draws from the model bounds.
+        """
+        rng = np.random.default_rng(seed)
+        design = trials[['SS_delay', 'trial_condition', 'block_duration']]
+        delay = design['SS_delay'].to_numpy(dtype=float)
+        condition = design['trial_condition'].to_numpy()
+        deadline = design['block_duration'].to_numpy(dtype=float)
+        n_trials = len(design)
+        motor = self.model_type.startswith('motor')
+        stop = condition == ('crit_stop' if motor else 'stop')
+        critical = np.isin(condition, ['crit_go', 'crit_stop'])
+        param_map = self._param_map[self.model_type]
+        parameter_rows = _simulation_parameters(self, n_participants, rng, parameters, manual_bounds)
+        simulated = []
+
+        for participant_id, params in enumerate(parameter_rows):
+            generating = {name: params[idx] for name, idx in param_map.items()}
+            if self.model_type.endswith('hr_exgau'):
+                for name, value in generating.items():
+                    setattr(self, name, value)
+                correct_go, error_go, stop_runner = self.horse_race_exgau_function()
+                scale = np.where(critical, self.critical_scale, 1.0) if motor else 1.0
+                correct_time = correct_go.rvs(n_trials, rng) * scale
+                error_time = error_go.rvs(n_trials, rng) * scale
+                go_time = np.minimum(correct_time, error_time)
+
+                triggered = stop & (rng.random(n_trials) >= self.p_trigger_failure)
+                stop_time = np.full(n_trials, np.inf)
+                stop_time[triggered] = delay[triggered] + stop_runner.rvs(triggered.sum(), rng)
+                response = (go_time <= deadline) & (go_time < stop_time)
+                choice = np.where(stop, ~response, response & (correct_time < error_time)).astype(int)
+                responded = response.astype(int)
+                response_time = np.where(response, go_time, np.nan)
+            else:
+                _, p_correct = self._function_map[self.model_type](
+                    params, delay, condition, np.nan, np.nan, np.zeros(n_trials, dtype=int), deadline)
+                choice = (rng.random(n_trials) < p_correct).astype(int)
+                responded = np.nan
+                response_time = np.nan
+
+            simulated.append(design.assign(
+                participant_id=participant_id, model_type=self.model_type,
+                trial=np.arange(n_trials), response_time=response_time,
+                responded=responded, choice=choice, **generating))
+
+        return pd.concat(simulated, ignore_index=True)
+
     def fit(self, data, num_iterations=20, max_workers=None):
         workers = max_workers or os.cpu_count()
         futures = []
@@ -1231,6 +1334,31 @@ class TwoByTwo:
         observed_probability = np.clip(observed_probability, 1e-64, 1.0)
         return float(-np.log(observed_probability).sum())
 
+    def simulate(self, trials, n_participants=1, *, parameters=None, manual_bounds=None, seed=None):
+        """Simulate correctness by the deadline for each row of a TwoByTwo design.
+
+        Supply CTI, switch_type, task_type, response_congruent and
+        block_duration. Parameters can be a named dict, a vector in fitting
+        order, or one row per participant. By default they are drawn from
+        model_bounds or manual_bounds and returned as columns.
+        """
+        rng = np.random.default_rng(seed)
+        design = trials[self.input_columns[:-1]]
+        predictors = [design[name].to_numpy() for name in design]
+        param_map = self._param_map[self.model_type]
+        parameter_rows = _simulation_parameters(self, n_participants, rng, parameters, manual_bounds)
+        simulated = []
+
+        for participant_id, params in enumerate(parameter_rows):
+            p_correct = self.probability_correct(params, *predictors)
+            choice = (rng.random(len(design)) < p_correct).astype(int)
+            generating = {name: params[idx] for name, idx in param_map.items()}
+            simulated.append(design.assign(
+                participant_id=participant_id, model_type=self.model_type,
+                trial=np.arange(len(design)), choice=choice, **generating))
+
+        return pd.concat(simulated, ignore_index=True)
+
     def fit(self, data, num_iterations=20, max_workers=None):
         workers = max_workers or os.cpu_count()
         futures = []
@@ -1295,7 +1423,7 @@ def dict_generator_cognitive(df, task='dd'):
             'loss_amount': ['loss_amount'],
             'gain_probability': ['gain_probability'],
             'loss_probability': ['loss_probability'],
-            'choice': ['action'],
+            'choice': ['action', 'choice'],
         },
         'stop_signal': {
             'SS_delay': ['SS_delay'],
@@ -1303,7 +1431,7 @@ def dict_generator_cognitive(df, task='dd'):
             'response_time': ['response_time'],
             'responded': ['responded'],
             'block_duration': ['block_duration'],
-            'choice': ['correct'],
+            'choice': ['correct', 'choice'],
         },
         'twobytwo': {
             'CTI': ['CTI'],
@@ -1311,7 +1439,7 @@ def dict_generator_cognitive(df, task='dd'):
             'task_type': ['task_type'],
             'response_congruent': ['response_congruent'],
             'block_duration': ['block_duration'],
-            'choice': ['correct'],
+            'choice': ['correct', 'choice'],
         },
         'motor': {
             'SS_delay': ['SS_delay'],
@@ -1319,15 +1447,15 @@ def dict_generator_cognitive(df, task='dd'):
             'response_time': ['response_time'],
             'responded': ['responded'],
             'block_duration': ['block_duration'],
-            'choice': ['correct'],
+            'choice': ['correct', 'choice'],
         },
     }
 
     if task not in COLUMN_MAP:
         raise ValueError(f"Unsupported task {task!r}")
 
-    # optional: allow different grouping columns too
-    group_col = find_col(['worker_id'])
+    # Observed data use worker_id; simulated data use participant_id.
+    group_col = find_col(['worker_id', 'participant_id'])
 
     d = {}
     for subject_id, group in df.groupby(group_col):
